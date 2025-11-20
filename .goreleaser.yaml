@@ -1,0 +1,23 @@
+---
+version: 2
+
+builds:
+  - skip: true
+
+dockers_v2:
+  - id: hermes
+    images:
+      - "ghcr.io/akash-network/hermes"
+    tags:
+      - "{{ .Tag }}"
+      - "v{{ .Major }}.{{ .Minor }}"
+      - "latest"
+    dockerfile: Dockerfile
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    # Include Node.js source files in Docker build context
+    extra_files:
+      - package.json
+      - tsconfig.json
+      - src

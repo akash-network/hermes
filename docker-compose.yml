@@ -1,0 +1,89 @@
+# Docker Compose for Akash Hermes Client
+# Supports multi-architecture builds (linux/amd64, linux/arm64)
+#
+# Usage:
+#   docker-compose up -d                    # Start daemon
+#   docker-compose --profile tools run hermes-update   # Run single update
+#   docker-compose --profile tools run hermes-query    # Query price
+#   DOCKER_PLATFORM=linux/arm64 docker-compose up -d   # Force ARM64
+
+services:
+  hermes-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+        - linux/arm64
+    image: akash-hermes-client:latest
+    container_name: hermes-client
+    # Platform can be overridden via environment variable
+    platform: ${DOCKER_PLATFORM:-}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    # Health check is defined in Dockerfile
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Run the daemon (continuous updates)
+    command: ["node", "dist/cli.js", "daemon"]
+
+  # Optional: Run with specific commands (use --profile tools)
+  hermes-update:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+        - linux/arm64
+    image: akash-hermes-client:latest
+    container_name: hermes-update
+    platform: ${DOCKER_PLATFORM:-}
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    command: ["node", "dist/cli.js", "update"]
+    profiles:
+      - tools
+
+  hermes-query:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+        - linux/arm64
+    image: akash-hermes-client:latest
+    container_name: hermes-query
+    platform: ${DOCKER_PLATFORM:-}
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    command: ["node", "dist/cli.js", "query"]
+    profiles:
+      - tools
+
+  hermes-status:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+        - linux/arm64
+    image: akash-hermes-client:latest
+    container_name: hermes-status
+    platform: ${DOCKER_PLATFORM:-}
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    command: ["node", "dist/cli.js", "status"]
+    profiles:
+      - tools
