@@ -17,6 +17,14 @@
 
 import HermesClient from './hermes-client';
 import { program } from 'commander';
+import {
+    parsePositiveInt,
+    validateMnemonic,
+    validateBech32Address,
+    validateUrl,
+    validateFee,
+} from './validation';
+import { sanitizeError } from './errors';
 
 interface CliConfig {
     rpc: string;
@@ -32,9 +40,7 @@ function loadConfig(): CliConfig {
         contract: process.env.CONTRACT_ADDRESS || '',
         mnemonic: process.env.MNEMONIC || '',
         hermes: process.env.HERMES_ENDPOINT,
-        interval: process.env.UPDATE_INTERVAL_MS
-            ? parseInt(process.env.UPDATE_INTERVAL_MS)
-            : undefined,
+        interval: parsePositiveInt(process.env.UPDATE_INTERVAL_MS),
     };
 
     if (!config.contract) {
@@ -46,6 +52,12 @@ function loadConfig(): CliConfig {
         console.error('Error: MNEMONIC environment variable is required');
         process.exit(1);
     }
+
+    // Validate inputs early with clear error messages
+    validateUrl(config.rpc);
+    validateBech32Address(config.contract);
+    validateMnemonic(config.mnemonic);
+    if (config.hermes) validateUrl(config.hermes);
 
     return config;
 }
@@ -66,7 +78,7 @@ async function updateCommand() {
         await client.updatePrice();
         console.log('\n✅ Update completed successfully!');
     } catch (error) {
-        console.error('\n❌ Update failed:', error);
+        console.error(`\n❌ Update failed: ${sanitizeError(error)}`);
         process.exit(1);
     }
 }
@@ -161,7 +173,7 @@ async function queryCommand(options: QueryOptions) {
             console.log('Price data is fresh');
         }
     } catch (error) {
-        console.error('\nQuery failed:', error);
+        console.error(`\nQuery failed: ${sanitizeError(error)}`);
         process.exit(1);
     }
 }
@@ -189,7 +201,7 @@ async function statusCommand() {
         console.log(`RPC Endpoint:     ${config.rpc}`);
         console.log(`Hermes Endpoint:  ${config.hermes || 'https://hermes.pyth.network'}`);
     } catch (error) {
-        console.error('\n❌ Status check failed:', error);
+        console.error(`\n❌ Status check failed: ${sanitizeError(error)}`);
         process.exit(1);
     }
 }
@@ -223,7 +235,7 @@ async function daemonCommand() {
         await client.start();
         console.log('✅ Daemon started. Press Ctrl+C to stop.\n');
     } catch (error) {
-        console.error('❌ Daemon failed to start:', error);
+        console.error(`❌ Daemon failed to start: ${sanitizeError(error)}`);
         process.exit(1);
     }
 }
@@ -245,12 +257,13 @@ async function adminRefreshParams() {
         console.log(`Oracle params refreshed successfully!`);
         console.log(`TX: ${txHash}`);
     } catch (error) {
-        console.error('\nFailed to refresh params:', error);
+        console.error(`\nFailed to refresh params: ${sanitizeError(error)}`);
         process.exit(1);
     }
 }
 
 async function adminUpdateFee(newFee: string) {
+    validateFee(newFee);
     console.log(`Updating fee to ${newFee}...\n`);
 
     const config = loadConfig();
@@ -266,12 +279,13 @@ async function adminUpdateFee(newFee: string) {
         console.log(`Fee updated successfully!`);
         console.log(`TX: ${txHash}`);
     } catch (error) {
-        console.error('\nFailed to update fee:', error);
+        console.error(`\nFailed to update fee: ${sanitizeError(error)}`);
         process.exit(1);
     }
 }
 
 async function adminTransfer(newAdmin: string) {
+    validateBech32Address(newAdmin);
     console.log(`Transferring admin to ${newAdmin}...\n`);
 
     const config = loadConfig();
@@ -287,7 +301,7 @@ async function adminTransfer(newAdmin: string) {
         console.log(`Admin transferred successfully!`);
         console.log(`TX: ${txHash}`);
     } catch (error) {
-        console.error('\nFailed to transfer admin:', error);
+        console.error(`\nFailed to transfer admin: ${sanitizeError(error)}`);
         process.exit(1);
     }
 }

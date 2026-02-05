@@ -15,6 +15,15 @@ import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
 import { GasPrice } from "@cosmjs/stargate";
 import axios from "axios";
+import {
+    parsePositiveInt,
+    validateMnemonic,
+    validateBech32Address,
+    validateUrl,
+    validateGasPrice,
+    validateFee,
+} from "./validation";
+import { sanitizeError, sanitizeAxiosError, wrapWalletError } from "./errors";
 
 // Hermes API endpoint
 const HERMES_API = "https://hermes.pyth.network";
@@ -149,12 +158,20 @@ export class HermesClient {
     private updateTimer?: NodeJS.Timeout;
 
     constructor(config: HermesConfig) {
+        // Validate required inputs early to prevent cryptic downstream errors
+        validateMnemonic(config.mnemonic);
+        validateBech32Address(config.contractAddress);
+        validateUrl(config.rpcEndpoint);
+        if (config.hermesEndpoint) validateUrl(config.hermesEndpoint);
+        const gasPrice = config.gasPrice || "0.025uakt";
+        validateGasPrice(gasPrice);
+
         this.config = {
             ...config,
             hermesEndpoint: config.hermesEndpoint || HERMES_API,
             updateIntervalMs: config.updateIntervalMs || UPDATE_INTERVAL_MS,
             denom: config.denom || "uakt",
-            gasPrice: config.gasPrice || "0.025uakt",
+            gasPrice,
         };
     }
 
@@ -164,11 +181,15 @@ export class HermesClient {
     async initialize(): Promise<void> {
         console.log("Initializing Hermes client...");
 
-        // Create wallet from mnemonic
-        this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(
-            this.config.mnemonic,
-            { prefix: "akash" }
-        );
+        // Create wallet from mnemonic — wrap errors to prevent mnemonic leaks
+        try {
+            this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(
+                this.config.mnemonic,
+                { prefix: "akash" }
+            );
+        } catch (error) {
+            throw wrapWalletError(error);
+        }
 
         // Get sender address
         const [account] = await this.wallet.getAccounts();
@@ -222,6 +243,7 @@ export class HermesClient {
 
         try {
             // Request base64 encoding for VAA data (compatible with CosmWasm Binary)
+            const controller = new AbortController();
             const response = await axios.get<HermesResponse>(
                 `${this.config.hermesEndpoint}/v2/updates/price/latest`,
                 {
@@ -229,6 +251,8 @@ export class HermesClient {
                         ids: [this.priceFeedId],
                         encoding: "base64",  // Request base64 for CosmWasm Binary
                     },
+                    timeout: 30000,
+                    signal: controller.signal,
                 }
             );
 
@@ -242,6 +266,20 @@ export class HermesClient {
 
             const priceData: PythPriceData = response.data.parsed[0];
             const vaa: string = response.data.binary.data[0];
+
+            // Validate response shape to guard against malformed API data
+            if (typeof priceData.price?.publish_time !== "number") {
+                throw new Error("Invalid response: price.publish_time must be a number");
+            }
+            if (typeof priceData.price?.price !== "string") {
+                throw new Error("Invalid response: price.price must be a string");
+            }
+            if (typeof priceData.price?.expo !== "number") {
+                throw new Error("Invalid response: price.expo must be a number");
+            }
+            if (typeof vaa !== "string" || vaa.length === 0) {
+                throw new Error("Invalid response: VAA binary data must be a non-empty string");
+            }
 
             console.log(
                 `Fetched price from Hermes: ${priceData.price.price} (expo: ${priceData.price.expo})`
@@ -257,7 +295,7 @@ export class HermesClient {
         } catch (error) {
             if (axios.isAxiosError(error)) {
                 throw new Error(
-                    `Failed to fetch from Hermes: ${error.response?.data?.message || error.message}`
+                    `Failed to fetch from Hermes: ${sanitizeAxiosError(error)}`
                 );
             }
             throw error;
@@ -358,6 +396,8 @@ export class HermesClient {
             throw new Error("Client not initialized");
         }
 
+        validateFee(newFee);
+
         const msg: UpdateFeeMsg = {
             update_fee: {
                 new_fee: newFee,
@@ -381,6 +421,8 @@ export class HermesClient {
         if (!this.client || !this.senderAddress) {
             throw new Error("Client not initialized");
         }
+
+        validateBech32Address(newAdmin);
 
         const msg: TransferAdminMsg = {
             transfer_admin: {
@@ -461,11 +503,7 @@ export class HermesClient {
             console.log(`  Gas used: ${result.gasUsed}`);
             console.log(`  New price: ${priceData.price.price} (expo: ${priceData.price.expo})`);
         } catch (error) {
-            if (error instanceof Error) {
-                console.error(`✗ Failed to update price: ${error.message}`);
-            } else {
-                console.error("✗ Failed to update price:", error);
-            }
+            console.error(`✗ Failed to update price: ${sanitizeError(error)}`);
             throw error;
         }
     }
@@ -496,7 +534,7 @@ export class HermesClient {
             try {
                 await this.updatePrice();
             } catch (error) {
-                console.error("Error in scheduled update:", error);
+                console.error(`Error in scheduled update: ${sanitizeError(error)}`);
             }
         }, this.config.updateIntervalMs);
     }
@@ -538,9 +576,7 @@ async function main() {
         contractAddress: process.env.CONTRACT_ADDRESS || "",
         mnemonic: process.env.MNEMONIC || "",
         hermesEndpoint: process.env.HERMES_ENDPOINT,
-        updateIntervalMs: process.env.UPDATE_INTERVAL_MS
-            ? parseInt(process.env.UPDATE_INTERVAL_MS)
-            : undefined,
+        updateIntervalMs: parsePositiveInt(process.env.UPDATE_INTERVAL_MS),
     };
 
     if (!config.contractAddress) {
@@ -569,7 +605,7 @@ async function main() {
 // Run if executed directly
 if (require.main === module) {
     main().catch((error) => {
-        console.error("Fatal error:", error);
+        console.error(`Fatal error: ${sanitizeError(error)}`);
         process.exit(1);
     });
 }
