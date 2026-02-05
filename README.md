@@ -1,4 +1,4 @@
-# Akash Hermes Oracle Client
+# Hermes replayer of Pyth price feed into Akash
 
 Automatic price feed updater for Akash Network oracle contracts using Pyth Network's Hermes API.
 

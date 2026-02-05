@@ -2,7 +2,13 @@
  * Hermes Client for fetching Pyth price data
  *
  * This client fetches AKT/USD price data from Pyth's Hermes API
- * and submits it to the Akash oracle contract.
+ * and submits it to the Akash Pyth contract.
+ *
+ * The Pyth contract:
+ * 1. Receives the VAA (Verified Action Approval) from this client
+ * 2. Verifies VAA signatures via Wormhole contract
+ * 3. Parses Pyth price attestation from VAA payload
+ * 4. Relays validated price to x/oracle module
  */
 
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
@@ -44,17 +50,28 @@ interface PythPriceData {
     };
 }
 
+// Hermes API response with VAA binary data
+interface HermesResponse {
+    binary: {
+        // Base64 encoded VAA data array
+        data: string[];
+    };
+    parsed: PythPriceData[];
+}
+
 // =====================
 // Contract Execute Messages
-// Matches price-oracle contract msg.rs
+// Matches pyth contract msg.rs
 // =====================
 
 interface UpdatePriceFeedMsg {
     update_price_feed: {
-        price: string;        // Uint128 serializes as string in JSON
-        conf: string;         // Uint128 serializes as string in JSON
-        expo: number;         // i32
-        publish_time: number; // i64
+        // VAA data from Pyth Hermes API (base64 encoded Binary)
+        // The Pyth contract will:
+        // 1. Verify VAA via Wormhole contract
+        // 2. Parse Pyth price attestation from payload
+        // 3. Relay to x/oracle module
+        vaa: string;
     };
 }
 
@@ -76,15 +93,22 @@ interface RefreshOracleParamsMsg {
 
 // =====================
 // Contract Query Responses
-// Matches price-oracle contract msg.rs
+// Matches Pyth contract msg.rs
 // =====================
+
+interface DataSourceResponse {
+    emitter_chain: number;    // u16 - Wormhole chain ID (26 for Pythnet)
+    emitter_address: string;  // 32 bytes hex encoded
+}
 
 interface ConfigResponse {
     admin: string;
+    wormhole_contract: string;
     update_fee: string;       // Uint256 serializes as string
     price_feed_id: string;
     default_denom: string;
     default_base_denom: string;
+    data_sources: DataSourceResponse[];
 }
 
 interface PriceResponse {
@@ -185,20 +209,25 @@ export class HermesClient {
     }
 
     /**
-     * Fetch latest price data from Hermes
+     * Fetch latest price data with VAA from Hermes
+     * Returns both parsed price data (for logging) and raw VAA (for contract)
      */
-    private async fetchPriceFromHermes(): Promise<PythPriceData> {
+    private async fetchPriceFromHermes(): Promise<{
+        priceData: PythPriceData;
+        vaa: string;
+    }> {
         if (!this.priceFeedId) {
             throw new Error("Price feed ID not loaded");
         }
 
         try {
-            const response = await axios.get(
+            // Request base64 encoding for VAA data (compatible with CosmWasm Binary)
+            const response = await axios.get<HermesResponse>(
                 `${this.config.hermesEndpoint}/v2/updates/price/latest`,
                 {
                     params: {
                         ids: [this.priceFeedId],
-                        encoding: "hex",
+                        encoding: "base64",  // Request base64 for CosmWasm Binary
                     },
                 }
             );
@@ -207,7 +236,12 @@ export class HermesClient {
                 throw new Error("No price data returned from Hermes");
             }
 
+            if (!response.data.binary?.data || response.data.binary.data.length === 0) {
+                throw new Error("No VAA binary data returned from Hermes");
+            }
+
             const priceData: PythPriceData = response.data.parsed[0];
+            const vaa: string = response.data.binary.data[0];
 
             console.log(
                 `Fetched price from Hermes: ${priceData.price.price} (expo: ${priceData.price.expo})`
@@ -215,8 +249,11 @@ export class HermesClient {
             console.log(
                 `  Confidence: ${priceData.price.conf}, Publish time: ${priceData.price.publish_time}`
             );
+            console.log(
+                `  VAA size: ${vaa.length} bytes (base64)`
+            );
 
-            return priceData;
+            return { priceData, vaa };
         } catch (error) {
             if (axios.isAxiosError(error)) {
                 throw new Error(
@@ -363,6 +400,12 @@ export class HermesClient {
 
     /**
      * Update the oracle contract with new price data
+     *
+     * Flow:
+     * 1. Fetch price + VAA from Pyth Hermes API
+     * 2. Check if price is newer than current (optimization)
+     * 3. Send VAA to Pyth contract
+     * 4. Contract verifies VAA via Wormhole, parses Pyth payload, relays to x/oracle
      */
     async updatePrice(): Promise<void> {
         if (!this.client || !this.senderAddress) {
@@ -370,10 +413,10 @@ export class HermesClient {
         }
 
         try {
-            // Fetch latest price from Hermes
-            const priceData = await this.fetchPriceFromHermes();
+            // Fetch latest price + VAA from Hermes
+            const { priceData, vaa } = await this.fetchPriceFromHermes();
 
-            // Get current price from contract
+            // Get current price from contract (for staleness check)
             const currentPrice = await this.queryCurrentPrice();
 
             // Check if update is needed (publish_time must be newer)
@@ -384,13 +427,15 @@ export class HermesClient {
                 return;
             }
 
-            // Prepare execute message
+            // Prepare execute message with VAA
+            // The contract will:
+            // 1. Verify VAA via Wormhole contract
+            // 2. Parse Pyth price attestation from VAA payload
+            // 3. Validate price feed ID matches expected
+            // 4. Relay validated price to x/oracle module
             const msg: UpdatePriceFeedMsg = {
                 update_price_feed: {
-                    price: priceData.price.price,
-                    conf: priceData.price.conf,
-                    expo: priceData.price.expo,
-                    publish_time: priceData.price.publish_time,
+                    vaa: vaa,
                 },
             };
 
@@ -401,7 +446,8 @@ export class HermesClient {
             );
 
             // Execute update
-            console.log("Submitting price update to contract...");
+            console.log("Submitting VAA to Pyth contract...");
+            console.log(`  Wormhole contract: ${config.wormhole_contract}`);
             const result = await this.client.execute(
                 this.senderAddress,
                 this.config.contractAddress,
@@ -413,6 +459,7 @@ export class HermesClient {
 
             console.log(`✓ Price updated successfully! TX: ${result.transactionHash}`);
             console.log(`  Gas used: ${result.gasUsed}`);
+            console.log(`  New price: ${priceData.price.price} (expo: ${priceData.price.expo})`);
         } catch (error) {
             if (error instanceof Error) {
                 console.error(`✗ Failed to update price: ${error.message}`);
@@ -530,7 +577,9 @@ if (require.main === module) {
 // Export types for external use
 export type {
     HermesConfig,
+    HermesResponse,
     PythPriceData,
+    DataSourceResponse,
     UpdatePriceFeedMsg,
     UpdateFeeMsg,
     TransferAdminMsg,
