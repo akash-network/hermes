@@ -17,6 +17,7 @@
 
 import HermesClient from './hermes-client';
 import { program } from 'commander';
+import { safeParseInt, validateAkashAddress, validateFeeAmount } from './validation';
 
 interface CliConfig {
     rpc: string;
@@ -27,31 +28,32 @@ interface CliConfig {
 }
 
 function loadConfig(): CliConfig {
-    const config: CliConfig = {
-        rpc: process.env.RPC_ENDPOINT || 'https://rpc.akashnet.net:443',
-        contract: process.env.CONTRACT_ADDRESS || '',
-        mnemonic: process.env.MNEMONIC || '',
-        hermes: process.env.HERMES_ENDPOINT,
-        interval: process.env.UPDATE_INTERVAL_MS
-            ? parseInt(process.env.UPDATE_INTERVAL_MS)
-            : undefined,
-    };
-
-    if (!config.contract) {
+    if (!process.env.CONTRACT_ADDRESS) {
         console.error('Error: CONTRACT_ADDRESS environment variable is required');
         process.exit(1);
     }
 
-    if (!config.mnemonic) {
+    if (!process.env.MNEMONIC) {
         console.error('Error: MNEMONIC environment variable is required');
         process.exit(1);
     }
+
+    // SEC-03: Use safe integer parsing with radix 10 and validation
+    const interval = safeParseInt(process.env.UPDATE_INTERVAL_MS, 'UPDATE_INTERVAL_MS');
+
+    const config: CliConfig = {
+        rpc: process.env.RPC_ENDPOINT || 'https://rpc.akashnet.net:443',
+        contract: process.env.CONTRACT_ADDRESS,
+        mnemonic: process.env.MNEMONIC,
+        hermes: process.env.HERMES_ENDPOINT,
+        interval,
+    };
 
     return config;
 }
 
 async function updateCommand() {
-    console.log('📊 Updating oracle price...\n');
+    console.log('Updating oracle price...\n');
 
     const config = loadConfig();
     const client = new HermesClient({
@@ -64,9 +66,13 @@ async function updateCommand() {
     try {
         await client.initialize();
         await client.updatePrice();
-        console.log('\n✅ Update completed successfully!');
+        console.log('\nUpdate completed successfully!');
     } catch (error) {
-        console.error('\n❌ Update failed:', error);
+        if (error instanceof Error) {
+            console.error(`\nUpdate failed: ${error.message}`);
+        } else {
+            console.error('\nUpdate failed: an unexpected error occurred');
+        }
         process.exit(1);
     }
 }
@@ -89,7 +95,7 @@ async function queryCommand(options: QueryOptions) {
         await client.initialize();
 
         if (options.config) {
-            console.log('🔧 Contract Configuration:\n');
+            console.log('Contract Configuration:\n');
             const cfg = await client.queryConfig();
             console.log('─────────────────────────────');
             console.log(`Admin:            ${cfg.admin}`);
@@ -101,7 +107,7 @@ async function queryCommand(options: QueryOptions) {
         }
 
         if (options.oracleParams) {
-            console.log('⚙️  Cached Oracle Parameters:\n');
+            console.log('Cached Oracle Parameters:\n');
             const params = await client.queryOracleParams();
             console.log('─────────────────────────────');
             console.log(`Max Deviation:    ${params.max_price_deviation_bps} bps (${params.max_price_deviation_bps / 100}%)`);
@@ -113,7 +119,7 @@ async function queryCommand(options: QueryOptions) {
         }
 
         if (options.feed) {
-            console.log('📈 Price Feed Data:\n');
+            console.log('Price Feed Data:\n');
             const feed = await client.queryPriceFeed();
             console.log('─────────────────────────────');
             console.log(`Symbol:           ${feed.symbol}`);
@@ -134,7 +140,7 @@ async function queryCommand(options: QueryOptions) {
         }
 
         // Default: query current price
-        console.log('🔍 Current Price:\n');
+        console.log('Current Price:\n');
         const price = await client.queryCurrentPrice();
 
         console.log('─────────────────────────────');
@@ -161,13 +167,17 @@ async function queryCommand(options: QueryOptions) {
             console.log('Price data is fresh');
         }
     } catch (error) {
-        console.error('\nQuery failed:', error);
+        if (error instanceof Error) {
+            console.error(`\nQuery failed: ${error.message}`);
+        } else {
+            console.error('\nQuery failed: an unexpected error occurred');
+        }
         process.exit(1);
     }
 }
 
 async function statusCommand() {
-    console.log('📋 Contract Status...\n');
+    console.log('Contract Status...\n');
 
     const config = loadConfig();
     const client = new HermesClient({
@@ -185,17 +195,21 @@ async function statusCommand() {
         console.log(`Address:          ${status.address}`);
         console.log(`Contract:         ${status.contractAddress}`);
         console.log(`Price Feed ID:    ${status.priceFeedId}`);
-        console.log(`Running:          ${status.isRunning ? '✅' : '❌'}`);
+        console.log(`Running:          ${status.isRunning ? 'yes' : 'no'}`);
         console.log(`RPC Endpoint:     ${config.rpc}`);
         console.log(`Hermes Endpoint:  ${config.hermes || 'https://hermes.pyth.network'}`);
     } catch (error) {
-        console.error('\n❌ Status check failed:', error);
+        if (error instanceof Error) {
+            console.error(`\nStatus check failed: ${error.message}`);
+        } else {
+            console.error('\nStatus check failed: an unexpected error occurred');
+        }
         process.exit(1);
     }
 }
 
 async function daemonCommand() {
-    console.log('🤖 Starting daemon mode...\n');
+    console.log('Starting daemon mode...\n');
 
     const config = loadConfig();
     const client = new HermesClient({
@@ -208,22 +222,26 @@ async function daemonCommand() {
 
     // Handle graceful shutdown
     process.on('SIGINT', () => {
-        console.log('\n\n🛑 Shutting down daemon...');
+        console.log('\n\nShutting down daemon...');
         client.stop();
         process.exit(0);
     });
 
     process.on('SIGTERM', () => {
-        console.log('\n\n🛑 Shutting down daemon...');
+        console.log('\n\nShutting down daemon...');
         client.stop();
         process.exit(0);
     });
 
     try {
         await client.start();
-        console.log('✅ Daemon started. Press Ctrl+C to stop.\n');
+        console.log('Daemon started. Press Ctrl+C to stop.\n');
     } catch (error) {
-        console.error('❌ Daemon failed to start:', error);
+        if (error instanceof Error) {
+            console.error(`Daemon failed to start: ${error.message}`);
+        } else {
+            console.error('Daemon failed to start: an unexpected error occurred');
+        }
         process.exit(1);
     }
 }
@@ -245,12 +263,18 @@ async function adminRefreshParams() {
         console.log(`Oracle params refreshed successfully!`);
         console.log(`TX: ${txHash}`);
     } catch (error) {
-        console.error('\nFailed to refresh params:', error);
+        if (error instanceof Error) {
+            console.error(`\nFailed to refresh params: ${error.message}`);
+        } else {
+            console.error('\nFailed to refresh params: an unexpected error occurred');
+        }
         process.exit(1);
     }
 }
 
 async function adminUpdateFee(newFee: string) {
+    // SEC-06: Validate fee format at CLI boundary
+    validateFeeAmount(newFee);
     console.log(`Updating fee to ${newFee}...\n`);
 
     const config = loadConfig();
@@ -266,12 +290,18 @@ async function adminUpdateFee(newFee: string) {
         console.log(`Fee updated successfully!`);
         console.log(`TX: ${txHash}`);
     } catch (error) {
-        console.error('\nFailed to update fee:', error);
+        if (error instanceof Error) {
+            console.error(`\nFailed to update fee: ${error.message}`);
+        } else {
+            console.error('\nFailed to update fee: an unexpected error occurred');
+        }
         process.exit(1);
     }
 }
 
 async function adminTransfer(newAdmin: string) {
+    // SEC-05: Validate address format at CLI boundary
+    validateAkashAddress(newAdmin);
     console.log(`Transferring admin to ${newAdmin}...\n`);
 
     const config = loadConfig();
@@ -287,7 +317,11 @@ async function adminTransfer(newAdmin: string) {
         console.log(`Admin transferred successfully!`);
         console.log(`TX: ${txHash}`);
     } catch (error) {
-        console.error('\nFailed to transfer admin:', error);
+        if (error instanceof Error) {
+            console.error(`\nFailed to transfer admin: ${error.message}`);
+        } else {
+            console.error('\nFailed to transfer admin: an unexpected error occurred');
+        }
         process.exit(1);
     }
 }

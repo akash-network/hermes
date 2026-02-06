@@ -6,11 +6,11 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Copy package files first for better caching
-COPY package.json ./
+COPY package.json package-lock.json ./
 COPY tsconfig.json ./
 
-# Install dependencies
-RUN npm install
+# SEC-07: Use ci for reproducible builds from lockfile
+RUN npm ci
 
 # Copy source code
 COPY src ./src
@@ -29,10 +29,10 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 WORKDIR /app
 
 # Copy package files
-COPY package.json ./
+COPY package.json package-lock.json ./
 
-# Install production dependencies only
-RUN npm install --production && \
+# SEC-07: Use ci for reproducible production builds from lockfile
+RUN npm ci --omit=dev && \
     npm cache clean --force
 
 # Copy built files from builder

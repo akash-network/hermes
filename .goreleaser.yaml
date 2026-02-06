@@ -19,5 +19,6 @@ dockers_v2:
     # Include Node.js source files in Docker build context
     extra_files:
       - package.json
+      - package-lock.json
       - tsconfig.json
       - src

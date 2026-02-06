@@ -15,6 +15,14 @@ import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
 import { GasPrice } from "@cosmjs/stargate";
 import axios from "axios";
+import {
+    validateEndpointUrl,
+    validateAkashAddress,
+    validateFeeAmount,
+    safeParseInt,
+    sanitizeErrorMessage,
+    validateMnemonicFormat,
+} from "./validation";
 
 // Hermes API endpoint
 const HERMES_API = "https://hermes.pyth.network";
@@ -149,10 +157,25 @@ export class HermesClient {
     private updateTimer?: NodeJS.Timeout;
 
     constructor(config: HermesConfig) {
+        // SEC-02: Validate endpoint URLs to prevent SSRF
+        validateEndpointUrl(config.rpcEndpoint, 'RPC endpoint');
+        if (config.hermesEndpoint) {
+            validateEndpointUrl(config.hermesEndpoint, 'Hermes endpoint');
+        }
+
+        // SEC-01: Validate mnemonic format without logging it
+        validateMnemonicFormat(config.mnemonic);
+
+        // SEC-03: Validate interval if provided
+        const interval = config.updateIntervalMs ?? UPDATE_INTERVAL_MS;
+        if (typeof interval !== 'number' || isNaN(interval) || !isFinite(interval) || interval <= 0) {
+            throw new Error('Invalid update interval: must be a positive number');
+        }
+
         this.config = {
             ...config,
             hermesEndpoint: config.hermesEndpoint || HERMES_API,
-            updateIntervalMs: config.updateIntervalMs || UPDATE_INTERVAL_MS,
+            updateIntervalMs: interval,
             denom: config.denom || "uakt",
             gasPrice: config.gasPrice || "0.025uakt",
         };
@@ -256,8 +279,11 @@ export class HermesClient {
             return { priceData, vaa };
         } catch (error) {
             if (axios.isAxiosError(error)) {
+                // SEC-04: Do not leak API response bodies or internal URLs
+                const statusCode = error.response?.status;
+                const statusText = statusCode ? ` (HTTP ${statusCode})` : '';
                 throw new Error(
-                    `Failed to fetch from Hermes: ${error.response?.data?.message || error.message}`
+                    `Failed to fetch from Hermes${statusText}: price data unavailable`
                 );
             }
             throw error;
@@ -354,6 +380,9 @@ export class HermesClient {
      * Update the update fee (admin only)
      */
     async updateFee(newFee: string): Promise<string> {
+        // SEC-06: Validate fee format before any operation
+        validateFeeAmount(newFee);
+
         if (!this.client || !this.senderAddress) {
             throw new Error("Client not initialized");
         }
@@ -378,6 +407,9 @@ export class HermesClient {
      * Transfer admin rights (admin only)
      */
     async transferAdmin(newAdmin: string): Promise<string> {
+        // SEC-05: Validate address format before any operation
+        validateAkashAddress(newAdmin);
+
         if (!this.client || !this.senderAddress) {
             throw new Error("Client not initialized");
         }
@@ -457,16 +489,14 @@ export class HermesClient {
                 [{ denom: this.config.denom, amount: config.update_fee }]
             );
 
-            console.log(`✓ Price updated successfully! TX: ${result.transactionHash}`);
+            console.log(`Price updated successfully! TX: ${result.transactionHash}`);
             console.log(`  Gas used: ${result.gasUsed}`);
             console.log(`  New price: ${priceData.price.price} (expo: ${priceData.price.expo})`);
         } catch (error) {
-            if (error instanceof Error) {
-                console.error(`✗ Failed to update price: ${error.message}`);
-            } else {
-                console.error("✗ Failed to update price:", error);
-            }
-            throw error;
+            // SEC-04: Sanitize error messages to prevent information leakage
+            const safeMessage = sanitizeErrorMessage(error, 'Failed to update price');
+            console.error(safeMessage);
+            throw new Error(safeMessage);
         }
     }
 
@@ -522,6 +552,8 @@ export class HermesClient {
         priceFeedId?: string;
         contractAddress: string;
     } {
+        // SEC-08: Only return non-sensitive operational status fields.
+        // Never include mnemonic, gasPrice, rpcEndpoint, or full config.
         return {
             isRunning: this.isRunning,
             address: this.senderAddress,
@@ -533,25 +565,26 @@ export class HermesClient {
 
 // CLI usage example
 async function main() {
-    const config: HermesConfig = {
-        rpcEndpoint: process.env.RPC_ENDPOINT || "https://rpc.akashnet.net:443",
-        contractAddress: process.env.CONTRACT_ADDRESS || "",
-        mnemonic: process.env.MNEMONIC || "",
-        hermesEndpoint: process.env.HERMES_ENDPOINT,
-        updateIntervalMs: process.env.UPDATE_INTERVAL_MS
-            ? parseInt(process.env.UPDATE_INTERVAL_MS)
-            : undefined,
-    };
-
-    if (!config.contractAddress) {
+    if (!process.env.CONTRACT_ADDRESS) {
         console.error("CONTRACT_ADDRESS environment variable is required");
         process.exit(1);
     }
 
-    if (!config.mnemonic) {
+    if (!process.env.MNEMONIC) {
         console.error("MNEMONIC environment variable is required");
         process.exit(1);
     }
+
+    // SEC-03: Use safe integer parsing with radix 10 and validation
+    const updateInterval = safeParseInt(process.env.UPDATE_INTERVAL_MS, 'UPDATE_INTERVAL_MS');
+
+    const config: HermesConfig = {
+        rpcEndpoint: process.env.RPC_ENDPOINT || "https://rpc.akashnet.net:443",
+        contractAddress: process.env.CONTRACT_ADDRESS,
+        mnemonic: process.env.MNEMONIC,
+        hermesEndpoint: process.env.HERMES_ENDPOINT,
+        updateIntervalMs: updateInterval,
+    };
 
     const client = new HermesClient(config);
 
@@ -569,7 +602,12 @@ async function main() {
 // Run if executed directly
 if (require.main === module) {
     main().catch((error) => {
-        console.error("Fatal error:", error);
+        // SEC-04: Do not leak stack traces or internal details on fatal errors
+        if (error instanceof Error) {
+            console.error(`Fatal error: ${error.message}`);
+        } else {
+            console.error("Fatal error: an unexpected error occurred");
+        }
         process.exit(1);
     });
 }

@@ -17,7 +17,9 @@
         "cli:update": "npm run cli -- update",
         "cli:query": "npm run cli -- query",
         "cli:status": "npm run cli -- status",
-        "cli:daemon": "npm run cli -- daemon"
+        "cli:daemon": "npm run cli -- daemon",
+        "test": "vitest run",
+        "test:watch": "vitest"
     },
     "keywords": [
         "akash",
@@ -37,7 +39,9 @@
     },
     "devDependencies": {
         "@types/node": "^22.0.0",
+        "@vitest/coverage-v8": "^4.0.18",
         "ts-node": "^10.9.0",
-        "typescript": "^5.0.0"
+        "typescript": "^5.0.0",
+        "vitest": "^4.0.18"
     }
 }
