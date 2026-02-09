@@ -8,6 +8,6 @@ export async function adminTransfer(config: CommandConfig, newAdmin: string): Pr
 
     const client = await config.createHermesClient(config);
     const txHash = await client.transferAdmin(newAdmin);
-    config.logger?.log(`Admin transferred successfully!`);
+    config.logger?.log("Admin transferred successfully!");
     config.logger?.log(`TX: ${txHash}`);
 }
