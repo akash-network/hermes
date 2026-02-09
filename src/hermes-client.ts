@@ -17,6 +17,7 @@ import { GasPrice } from "@cosmjs/stargate";
 import {
     validateEndpointUrl,
     validateAkashAddress,
+    validateContractAddress,
     validateFeeAmount,
     sanitizeErrorMessage,
     validateMnemonicFormat,
@@ -189,6 +190,7 @@ export class HermesClient {
 
         // SEC-01: Validate mnemonic format without logging it
         validateMnemonicFormat(config.mnemonic);
+        validateContractAddress(config.contractAddress);
 
         // SEC-03: Validate interval if provided
         const interval = config.updateIntervalMs ?? UPDATE_INTERVAL_MS;
@@ -235,6 +237,7 @@ export class HermesClient {
                     gasPrice: GasPrice.fromString(this.#config.gasPrice),
                 }
             );
+            this.#logger.log("Connected to chain successfully");
 
             // Fetch price feed ID from contract
             await this.#fetchPriceFeedId();
