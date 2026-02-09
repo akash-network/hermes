@@ -13,11 +13,12 @@ RUN npm ci
 
 # Copy source code
 COPY src ./src
+COPY tsconfig.json ./
 
 # Build TypeScript
 RUN npm run build
 
-FROM node:20-alpine
+FROM node:24.13.0-alpine
 
 # Labels for container metadata
 LABEL org.opencontainers.image.title="Akash Hermes Client"
