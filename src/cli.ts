@@ -16,9 +16,8 @@
  */
 
 import process from 'node:process';
-import { type Command, program } from 'commander';
-import { HermesClient, type HermesConfig } from './hermes-client.ts';
-import { safeParseInt } from './validation.ts';
+import { program } from 'commander';
+import { createCommandBuilder } from './cli-commands/create-command-builder.ts';
 import { updateCommand } from './cli-commands/update-command.ts';
 import { queryCommand } from './cli-commands/query-command.ts';
 import { statusCommand } from './cli-commands/status-command.ts';
@@ -26,52 +25,8 @@ import { daemonCommand } from './cli-commands/daemon-command.ts';
 import { adminRefreshParams } from './cli-commands/admin-refresh-params.ts';
 import { adminUpdateFee } from './cli-commands/admin-update-fee.ts';
 import { adminTransfer } from './cli-commands/admin-transfer.ts';
-import type { CommandConfig } from './cli-commands/command-config.ts';
 
-function loadConfig(): CommandConfig {
-    if (!process.env.CONTRACT_ADDRESS) {
-        console.error('Error: CONTRACT_ADDRESS environment variable is required');
-        process.exit(1);
-    }
-
-    if (!process.env.MNEMONIC) {
-        console.error('Error: MNEMONIC environment variable is required');
-        process.exit(1);
-    }
-
-    // SEC-03: Use safe integer parsing with radix 10 and validation
-    const interval = safeParseInt(process.env.UPDATE_INTERVAL_MS, 'UPDATE_INTERVAL_MS');
-
-    const config: CommandConfig = {
-        rpcEndpoint: process.env.RPC_ENDPOINT || 'https://rpc.akashnet.net:443',
-        contractAddress: process.env.CONTRACT_ADDRESS,
-        mnemonic: process.env.MNEMONIC,
-        hermesEndpoint: process.env.HERMES_ENDPOINT,
-        updateIntervalMs: interval,
-        onlySecureEndpoints:process.env.NODE_ENV === 'production', // Enforce secure endpoints in production
-        logger: console,
-        process,
-        createHermesClient: (cfg: HermesConfig) => HermesClient.connect(cfg),
-    };
-
-    return config;
-}
-
-function command<T>(fn: (config: CommandConfig, options: T) => Promise<void>) {
-    return async (options: T, command: Command) => {
-        const config = loadConfig();
-        try {
-            await fn(config, options);
-        } catch (error) {
-            if (error instanceof Error) {
-                console.error(`\nCommand "${command.name()}" failed: ${error.message}`);
-            } else {
-                console.error(`\nCommand "${command.name()}" failed: an unexpected error occurred`);
-            }
-            process.exit(1);
-        }
-    };
-}
+const command = createCommandBuilder({ process, console });
 
 // Setup CLI
 program

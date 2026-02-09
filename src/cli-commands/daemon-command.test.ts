@@ -1,5 +1,4 @@
-import EventEmitter from 'node:events';
-import { setTimeout as wait } from 'node:timers/promises';
+import { setImmediate } from 'node:timers/promises';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mock } from 'vitest-mock-extended';
 import type { HermesClient } from '../hermes-client.ts';
@@ -9,8 +8,7 @@ import { daemonCommand } from './daemon-command.ts';
 describe('daemonCommand', () => {
     afterEach(async () => {
         // Ensure we clean up any running servers after each test
-        testProcess?.emit('SIGINT');
-        await wait(10)
+        testAbortController?.abort();
     });
 
     it('logs startup message', async () => {
@@ -43,15 +41,6 @@ describe('daemonCommand', () => {
         expect(logger.log).toHaveBeenCalledWith('Daemon started. Press Ctrl+C to stop.\n');
     });
 
-    it('registers SIGINT and SIGTERM handlers on config.process', async () => {
-        const { config } = setup();
-        const onSpy = vi.spyOn(config.process, 'on');
-        await daemonCommand(config);
-
-        expect(onSpy).toHaveBeenCalledWith('SIGINT', expect.any(Function));
-        expect(onSpy).toHaveBeenCalledWith('SIGTERM', expect.any(Function));
-    });
-
     it('health check server returns 404 for other routes', async () => {
         const { config } = setup();
         await daemonCommand(config);
@@ -60,46 +49,33 @@ describe('daemonCommand', () => {
         expect(response.status).toBe(404);
     });
 
-    it('stops polling price and stops healthcheck server on SIGINT', async () => {
-        const { config, logger, process } = setup();
+    it('stops polling price and stops healthcheck server on abort', async () => {
+        const { config, logger, abortController } = setup();
         await daemonCommand(config);
 
-        process.emit('SIGINT');
-        await wait(10);
+        abortController.abort();
+        await setImmediate(); // Wait for async cleanup to complete
 
         expect(logger.log).toHaveBeenCalledWith('\n\nShutting down daemon...');
         expect(logger.log).toHaveBeenCalledWith('\nStopping health check server...');
         expect(logger.log).toHaveBeenCalledWith('Health check server stopped');
     });
 
-    it('stops polling price and stops healthcheck server on SIGINT', async () => {
-        const { config, logger, process, client } = setup();
-        await daemonCommand(config);
-
-        process.emit('SIGTERM');
-        await wait(10);
-
-        console.log(client.getStatus())
-
-        expect(logger.log).toHaveBeenCalledWith('\n\nShutting down daemon...');
-        expect(logger.log).toHaveBeenCalledWith('\nStopping health check server...');
-        expect(logger.log).toHaveBeenCalledWith('Health check server stopped');
-    });
-
-    let testProcess: EventEmitter;
+    let testAbortController: AbortController | null = null;
     function setup() {
         const client = mock<HermesClient>();
         client.getStatus.mockReturnValue({ isRunning: true, contractAddress: '', priceFeedId: '', address: '' });
         const logger = mock<Console>();
-        testProcess = new EventEmitter();
+        const abortController = new AbortController();
+        testAbortController = abortController;
         const config: CommandConfig = {
             rpcEndpoint: 'https://rpc.akashnet.net:443',
             contractAddress: 'akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu',
             mnemonic: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
             logger,
-            process: testProcess,
+            signal: abortController.signal,
             createHermesClient: vi.fn(() => Promise.resolve(client)),
         };
-        return { config, client, logger, process: testProcess };
+        return { config, client, logger, abortController };
     }
 });

@@ -22,7 +22,7 @@ export function validateEndpointUrl(url: string, fieldName: string, onlySecureEn
         throw new Error(`Invalid ${fieldName}: only HTTP/HTTPS endpoints are allowed`);
     }
 
-    // Block private/internal IP ranges to prevent SSRF (production only)
+    // When onlySecureEndpoints is enabled, block private/internal IP ranges to prevent SSRF
     if (onlySecureEndpoints) {
         const hostname = parsed.hostname.toLowerCase();
         const blockedPatterns = [
@@ -123,7 +123,7 @@ export function sanitizeErrorMessage(error: unknown, context: string): string {
         msg = msg.replace(/\n\s+at .+/g, '');
         // Strip potential API response data
         msg = msg.replace(/\{[^}]*"[^"]*"[^}]*\}/g, '[response data]');
-        // Strip possible mnemocnic phrases (12 or 24 words)
+        // Strip possible mnemonic phrases (12 or 24 words)
         msg = msg.replace(MNEMONIC_REGEX, '[mnemonic]');
         return `${context}: ${msg}`;
     }

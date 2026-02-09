@@ -4,19 +4,6 @@ import type { CommandConfig } from "./command-config.ts";
 export async function daemonCommand(config: CommandConfig): Promise<void> {
     config.logger?.log('Starting daemon mode...\n');
 
-    const abortController = new AbortController();
-
-    // Handle graceful shutdown
-    config.process.on('SIGINT', () => {
-        config.logger?.log('\n\nShutting down daemon...');
-        abortController.abort();
-    });
-
-    config.process.on('SIGTERM', () => {
-        config.logger?.log('\n\nShutting down daemon...');
-        abortController.abort();
-    });
-
     const client = await config.createHermesClient(config);
     const server = http.createServer((req, res) => {
         if (req.method === 'GET' && req.url === '/health') {
@@ -28,14 +15,21 @@ export async function daemonCommand(config: CommandConfig): Promise<void> {
             res.end('Not Found');
         }
     });
-    abortController.signal.addEventListener('abort', () => {
-        if (!server.listening) return;
+    config.signal.addEventListener('abort', () => {
+        config.logger?.log('\n\nShutting down daemon...');
         config.logger?.log('\nStopping health check server...');
         server.close(() => config.logger?.log('Health check server stopped'));
     }, { once: true });
-    await client.start({ signal: abortController.signal });
-    server.listen(3000, () => {
-        config.logger?.log('Health check endpoint available at http://localhost:3000/health');
+    await client.start({ signal: config.signal });
+    await new Promise<void>((resolve) => {
+        if (config.signal.aborted) return resolve();
+        server.listen(3000, () => {
+            config.logger?.log('Health check endpoint available at http://localhost:3000/health');
+            resolve();
+        });
     });
+    if (config.signal.aborted && server.listening) {
+        await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
     config.logger?.log('Daemon started. Press Ctrl+C to stop.\n');
 }

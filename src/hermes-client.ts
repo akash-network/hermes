@@ -204,7 +204,7 @@ export class HermesClient {
             onlySecureEndpoints: onlySecureEndpoints,
             updateIntervalMs: interval,
         };
-        this.#fetch = config.fetch ?? globalThis.fetch
+        this.#fetch = config.fetch ?? globalThis.fetch;
         this.#logger = config.logger ?? console;
         this.#connectWithSigner = config.connectWithSigner ?? SigningCosmWasmClient.connectWithSigner;
     }
@@ -524,7 +524,7 @@ export class HermesClient {
             return;
         }
 
-        // impotant to be set before any async operation to prevent multiple concurrent starts
+        // important to be set before any async operation to prevent multiple concurrent starts
         this.#isRunning = true;
 
         options?.signal?.addEventListener("abort", () => {

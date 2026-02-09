@@ -4,13 +4,14 @@
     "description": "Hermes client for updating Akash oracle with Pyth price data",
     "main": "dist/hermes-client.js",
     "types": "dist/hermes-client.d.ts",
+    "type": "module",
     "bin": {
         "hermes-cli": "dist/cli.js"
     },
     "scripts": {
         "build": "tsc",
-        "start": "node dist/daemon.js",
-        "dev": "node --experimental-strip-types --watch src/cli.ts daemon",
+        "start": "node dist/cli.js daemon",
+        "dev": "NODE_ENV=development node --experimental-strip-types --watch src/cli.ts daemon",
         "clean": "rm -rf dist",
         "cli": "node --experimental-strip-types src/cli.ts",
         "cli:update": "npm run cli -- update",
