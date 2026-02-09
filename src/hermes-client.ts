@@ -14,16 +14,13 @@
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
 import { GasPrice } from "@cosmjs/stargate";
-import axios from "axios";
 import {
     validateEndpointUrl,
     validateAkashAddress,
     validateFeeAmount,
-    safeParseInt,
     sanitizeErrorMessage,
     validateMnemonicFormat,
-} from "./validation";
-
+} from "./validation.ts";
 // Hermes API endpoint
 const HERMES_API = "https://hermes.pyth.network";
 
@@ -31,7 +28,12 @@ const HERMES_API = "https://hermes.pyth.network";
 const UPDATE_INTERVAL_MS = 5 * 60 * 1000;
 
 // Configuration
-interface HermesConfig {
+export interface HermesConfig {
+    /**
+     * Enforces secure endpoint URLs (HTTPS, no private/internal addresses).
+     * @default true
+     */
+    onlySecureEndpoints?: boolean;
     rpcEndpoint: string;
     contractAddress: string;
     mnemonic: string;
@@ -39,6 +41,18 @@ interface HermesConfig {
     updateIntervalMs?: number;
     denom?: string;
     gasPrice?: string;
+    /**
+     * `fetch` implementation to use for HTTP requests. Defaults to globalThis.fetch.
+     */
+    fetch?: typeof globalThis.fetch;
+    /**
+     * Optional logger for informational messages. Should implement log, error, and warn methods.
+     */
+    logger?: Pick<Console, 'log' | 'error' | 'warn'>;
+    /**
+     * Optional custom connectWithSigner function for testing or advanced use cases. Defaults to SigningCosmWasmClient.connectWithSigner.
+     */
+    connectWithSigner?: typeof SigningCosmWasmClient.connectWithSigner;
 }
 
 // Pyth price data from Hermes API
@@ -59,7 +73,7 @@ interface PythPriceData {
 }
 
 // Hermes API response with VAA binary data
-interface HermesResponse {
+export interface HermesResponse {
     binary: {
         // Base64 encoded VAA data array
         data: string[];
@@ -148,19 +162,29 @@ interface OracleParamsResponse {
 }
 
 export class HermesClient {
-    private client?: SigningCosmWasmClient;
-    private wallet?: DirectSecp256k1HdWallet;
-    private senderAddress?: string;
-    private config: Required<HermesConfig>;
-    private priceFeedId?: string;
-    private isRunning = false;
-    private updateTimer?: NodeJS.Timeout;
+    #cosmClient?: SigningCosmWasmClient;
+    #wallet?: DirectSecp256k1HdWallet;
+    #senderAddress?: string;
+    readonly #config: Required<Omit<HermesConfig, 'fetch' | 'logger' | 'connectWithSigner'>>;
+    #priceFeedId?: string;
+    #isRunning = false;
+    #updateTimer?: NodeJS.Timeout;
+    #fetch: Exclude<HermesConfig['fetch'], undefined>;
+    #logger: Exclude<HermesConfig['logger'], undefined>;
+    #connectWithSigner: typeof SigningCosmWasmClient.connectWithSigner;
+
+    static async connect(config: HermesConfig): Promise<HermesClient> {
+        const client = new HermesClient(config);
+        await client.initialize();
+        return client;
+    }
 
     constructor(config: HermesConfig) {
+        const onlySecureEndpoints = config.onlySecureEndpoints ?? true;
         // SEC-02: Validate endpoint URLs to prevent SSRF
-        validateEndpointUrl(config.rpcEndpoint, 'RPC endpoint');
+        validateEndpointUrl(config.rpcEndpoint, 'RPC endpoint', onlySecureEndpoints);
         if (config.hermesEndpoint) {
-            validateEndpointUrl(config.hermesEndpoint, 'Hermes endpoint');
+            validateEndpointUrl(config.hermesEndpoint, 'Hermes endpoint', onlySecureEndpoints);
         }
 
         // SEC-01: Validate mnemonic format without logging it
@@ -168,138 +192,141 @@ export class HermesClient {
 
         // SEC-03: Validate interval if provided
         const interval = config.updateIntervalMs ?? UPDATE_INTERVAL_MS;
-        if (typeof interval !== 'number' || isNaN(interval) || !isFinite(interval) || interval <= 0) {
+        if (typeof interval !== 'number' || Number.isNaN(interval) || !Number.isFinite(interval) || interval <= 0) {
             throw new Error('Invalid update interval: must be a positive number');
         }
 
-        this.config = {
+        this.#config = {
+            hermesEndpoint: HERMES_API,
+            denom: "uakt",
+            gasPrice: "0.025uakt",
             ...config,
-            hermesEndpoint: config.hermesEndpoint || HERMES_API,
+            onlySecureEndpoints: onlySecureEndpoints,
             updateIntervalMs: interval,
-            denom: config.denom || "uakt",
-            gasPrice: config.gasPrice || "0.025uakt",
         };
+        this.#fetch = config.fetch ?? globalThis.fetch
+        this.#logger = config.logger ?? console;
+        this.#connectWithSigner = config.connectWithSigner ?? SigningCosmWasmClient.connectWithSigner;
     }
 
     /**
      * Initialize the client and connect to the chain
      */
     async initialize(): Promise<void> {
-        console.log("Initializing Hermes client...");
+        try {
+            this.#logger.log("Initializing Hermes client...");
 
-        // Create wallet from mnemonic
-        this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(
-            this.config.mnemonic,
-            { prefix: "akash" }
-        );
+            // Create wallet from mnemonic
+            this.#wallet = await DirectSecp256k1HdWallet.fromMnemonic(
+                this.#config.mnemonic,
+                { prefix: "akash" }
+            );
 
-        // Get sender address
-        const [account] = await this.wallet.getAccounts();
-        this.senderAddress = account.address;
-        console.log(`Using address: ${this.senderAddress}`);
+            // Get sender address
+            const [account] = await this.#wallet.getAccounts();
+            this.#senderAddress = account.address;
+            this.#logger.log(`Using address: ${this.#senderAddress}`);
 
-        // Connect to the chain
-        this.client = await SigningCosmWasmClient.connectWithSigner(
-            this.config.rpcEndpoint,
-            this.wallet,
-            {
-                gasPrice: GasPrice.fromString(this.config.gasPrice),
-            }
-        );
+            // Connect to the chain
+            this.#cosmClient = await this.#connectWithSigner(
+                this.#config.rpcEndpoint,
+                this.#wallet,
+                {
+                    gasPrice: GasPrice.fromString(this.#config.gasPrice),
+                }
+            );
 
-        // Fetch price feed ID from contract
-        await this.fetchPriceFeedId();
+            // Fetch price feed ID from contract
+            await this.#fetchPriceFeedId();
 
-        console.log("Hermes client initialized successfully");
+            this.#logger.log("Hermes client initialized successfully");
+        } catch (error) {
+            // SEC-04: Sanitize error messages to prevent information leakage
+            const safeMessage = sanitizeErrorMessage(error, 'Failed to initialize Hermes client');
+            this.#logger.error(safeMessage);
+            throw new Error(safeMessage);
+        }
     }
 
     /**
      * Fetch the price feed ID from the contract
      */
-    private async fetchPriceFeedId(): Promise<void> {
-        if (!this.client) {
-            throw new Error("Client not initialized");
-        }
-
-        const config: ConfigResponse = await this.client.queryContractSmart(
-            this.config.contractAddress,
+    async #fetchPriceFeedId(): Promise<void> {
+        const config: ConfigResponse = await this.#getCosmClient().queryContractSmart(
+            this.#config.contractAddress,
             { get_config: {} }
         );
 
-        this.priceFeedId = config.price_feed_id;
-        console.log(`Using Pyth Price Feed ID: ${this.priceFeedId}`);
-        console.log(`Update fee: ${config.update_fee} ${this.config.denom}`);
+        this.#priceFeedId = config.price_feed_id;
+        this.#logger.log(`Using Pyth Price Feed ID: ${this.#priceFeedId}`);
+        this.#logger.log(`Update fee: ${config.update_fee} ${this.#config.denom}`);
     }
 
     /**
      * Fetch latest price data with VAA from Hermes
      * Returns both parsed price data (for logging) and raw VAA (for contract)
      */
-    private async fetchPriceFromHermes(): Promise<{
+    async #fetchPriceFromHermes(): Promise<{
         priceData: PythPriceData;
         vaa: string;
     }> {
-        if (!this.priceFeedId) {
+        if (!this.#priceFeedId) {
             throw new Error("Price feed ID not loaded");
         }
 
-        try {
-            // Request base64 encoding for VAA data (compatible with CosmWasm Binary)
-            const response = await axios.get<HermesResponse>(
-                `${this.config.hermesEndpoint}/v2/updates/price/latest`,
-                {
-                    params: {
-                        ids: [this.priceFeedId],
-                        encoding: "base64",  // Request base64 for CosmWasm Binary
-                    },
-                }
+        // Request base64 encoding for VAA data (compatible with CosmWasm Binary)
+        const params = new URLSearchParams({
+            'ids[]': this.#priceFeedId,
+            encoding: "base64",
+        });
+        const response = await this.#fetch(`${this.#config.hermesEndpoint}/v2/updates/price/latest?${params.toString()}`);
+
+        if (!response.ok) {
+            const statusText = response.status ? ` (HTTP ${response.status})` : '';
+            throw new Error(
+                `Failed to fetch from Hermes${statusText}: price data unavailable`
             );
-
-            if (!response.data.parsed || response.data.parsed.length === 0) {
-                throw new Error("No price data returned from Hermes");
-            }
-
-            if (!response.data.binary?.data || response.data.binary.data.length === 0) {
-                throw new Error("No VAA binary data returned from Hermes");
-            }
-
-            const priceData: PythPriceData = response.data.parsed[0];
-            const vaa: string = response.data.binary.data[0];
-
-            console.log(
-                `Fetched price from Hermes: ${priceData.price.price} (expo: ${priceData.price.expo})`
-            );
-            console.log(
-                `  Confidence: ${priceData.price.conf}, Publish time: ${priceData.price.publish_time}`
-            );
-            console.log(
-                `  VAA size: ${vaa.length} bytes (base64)`
-            );
-
-            return { priceData, vaa };
-        } catch (error) {
-            if (axios.isAxiosError(error)) {
-                // SEC-04: Do not leak API response bodies or internal URLs
-                const statusCode = error.response?.status;
-                const statusText = statusCode ? ` (HTTP ${statusCode})` : '';
-                throw new Error(
-                    `Failed to fetch from Hermes${statusText}: price data unavailable`
-                );
-            }
-            throw error;
         }
+
+        const data = await response.json() as HermesResponse;
+
+        if (!data.parsed || data.parsed.length === 0) {
+            throw new Error("No price data returned from Hermes");
+        }
+
+        if (!data.binary?.data || data.binary.data.length === 0) {
+            throw new Error("No VAA binary data returned from Hermes");
+        }
+
+        const priceData: PythPriceData = data.parsed[0];
+        const vaa: string = data.binary.data[0];
+
+        this.#logger.log(
+            `Fetched price from Hermes: ${priceData.price.price} (expo: ${priceData.price.expo})`
+        );
+        this.#logger.log(
+            `  Confidence: ${priceData.price.conf}, Publish time: ${priceData.price.publish_time}`
+        );
+        this.#logger.log(
+            `  VAA size: ${vaa.length} bytes (base64)`
+        );
+
+        return { priceData, vaa };
+    }
+
+    #getCosmClient(): SigningCosmWasmClient {
+        if (!this.#cosmClient) {
+            throw new Error("Client not initialized");
+        }
+        return this.#cosmClient;
     }
 
     /**
      * Query current price from contract
      */
     async queryCurrentPrice(): Promise<PriceResponse> {
-        if (!this.client) {
-            throw new Error("Client not initialized");
-        }
-
-        const price: PriceResponse = await this.client.queryContractSmart(
-            this.config.contractAddress,
+        const price: PriceResponse = await this.#getCosmClient().queryContractSmart(
+            this.#config.contractAddress,
             { get_price: {} }
         );
 
@@ -310,12 +337,8 @@ export class HermesClient {
      * Query current price feed with metadata from contract
      */
     async queryPriceFeed(): Promise<PriceFeedResponse> {
-        if (!this.client) {
-            throw new Error("Client not initialized");
-        }
-
-        const feed: PriceFeedResponse = await this.client.queryContractSmart(
-            this.config.contractAddress,
+        const feed: PriceFeedResponse = await this.#getCosmClient().queryContractSmart(
+            this.#config.contractAddress,
             { get_price_feed: {} }
         );
 
@@ -326,12 +349,8 @@ export class HermesClient {
      * Query contract configuration
      */
     async queryConfig(): Promise<ConfigResponse> {
-        if (!this.client) {
-            throw new Error("Client not initialized");
-        }
-
-        const config: ConfigResponse = await this.client.queryContractSmart(
-            this.config.contractAddress,
+        const config: ConfigResponse = await this.#getCosmClient().queryContractSmart(
+            this.#config.contractAddress,
             { get_config: {} }
         );
 
@@ -342,12 +361,8 @@ export class HermesClient {
      * Query cached oracle parameters from contract
      */
     async queryOracleParams(): Promise<OracleParamsResponse> {
-        if (!this.client) {
-            throw new Error("Client not initialized");
-        }
-
-        const params: OracleParamsResponse = await this.client.queryContractSmart(
-            this.config.contractAddress,
+        const params: OracleParamsResponse = await this.#getCosmClient().queryContractSmart(
+            this.#config.contractAddress,
             { get_oracle_params: {} }
         );
 
@@ -358,7 +373,7 @@ export class HermesClient {
      * Refresh cached oracle parameters (admin only)
      */
     async refreshOracleParams(): Promise<string> {
-        if (!this.client || !this.senderAddress) {
+        if (!this.#senderAddress) {
             throw new Error("Client not initialized");
         }
 
@@ -366,9 +381,9 @@ export class HermesClient {
             refresh_oracle_params: {},
         };
 
-        const result = await this.client.execute(
-            this.senderAddress,
-            this.config.contractAddress,
+        const result = await this.#getCosmClient().execute(
+            this.#senderAddress,
+            this.#config.contractAddress,
             msg,
             "auto"
         );
@@ -383,7 +398,7 @@ export class HermesClient {
         // SEC-06: Validate fee format before any operation
         validateFeeAmount(newFee);
 
-        if (!this.client || !this.senderAddress) {
+        if (!this.#senderAddress) {
             throw new Error("Client not initialized");
         }
 
@@ -393,9 +408,9 @@ export class HermesClient {
             },
         };
 
-        const result = await this.client.execute(
-            this.senderAddress,
-            this.config.contractAddress,
+        const result = await this.#getCosmClient().execute(
+            this.#senderAddress,
+            this.#config.contractAddress,
             msg,
             "auto"
         );
@@ -410,7 +425,7 @@ export class HermesClient {
         // SEC-05: Validate address format before any operation
         validateAkashAddress(newAdmin);
 
-        if (!this.client || !this.senderAddress) {
+        if (!this.#senderAddress) {
             throw new Error("Client not initialized");
         }
 
@@ -420,9 +435,9 @@ export class HermesClient {
             },
         };
 
-        const result = await this.client.execute(
-            this.senderAddress,
-            this.config.contractAddress,
+        const result = await this.#getCosmClient().execute(
+            this.#senderAddress,
+            this.#config.contractAddress,
             msg,
             "auto"
         );
@@ -440,20 +455,20 @@ export class HermesClient {
      * 4. Contract verifies VAA via Wormhole, parses Pyth payload, relays to x/oracle
      */
     async updatePrice(): Promise<void> {
-        if (!this.client || !this.senderAddress) {
+        if (!this.#senderAddress) {
             throw new Error("Client not initialized");
         }
 
         try {
             // Fetch latest price + VAA from Hermes
-            const { priceData, vaa } = await this.fetchPriceFromHermes();
+            const { priceData, vaa } = await this.#fetchPriceFromHermes();
 
             // Get current price from contract (for staleness check)
             const currentPrice = await this.queryCurrentPrice();
 
             // Check if update is needed (publish_time must be newer)
             if (priceData.price.publish_time <= currentPrice.publish_time) {
-                console.log(
+                this.#logger.log(
                     `Price already up to date (publish_time: ${currentPrice.publish_time})`
                 );
                 return;
@@ -472,30 +487,30 @@ export class HermesClient {
             };
 
             // Get config to determine update fee
-            const config: ConfigResponse = await this.client.queryContractSmart(
-                this.config.contractAddress,
+            const config: ConfigResponse = await this.#getCosmClient().queryContractSmart(
+                this.#config.contractAddress,
                 { get_config: {} }
             );
 
             // Execute update
-            console.log("Submitting VAA to Pyth contract...");
-            console.log(`  Wormhole contract: ${config.wormhole_contract}`);
-            const result = await this.client.execute(
-                this.senderAddress,
-                this.config.contractAddress,
+            this.#logger.log("Submitting VAA to Pyth contract...");
+            this.#logger.log(`  Wormhole contract: ${config.wormhole_contract}`);
+            const result = await this.#getCosmClient().execute(
+                this.#senderAddress,
+                this.#config.contractAddress,
                 msg,
                 "auto",
                 undefined,
-                [{ denom: this.config.denom, amount: config.update_fee }]
+                [{ denom: this.#config.denom, amount: config.update_fee }]
             );
 
-            console.log(`Price updated successfully! TX: ${result.transactionHash}`);
-            console.log(`  Gas used: ${result.gasUsed}`);
-            console.log(`  New price: ${priceData.price.price} (expo: ${priceData.price.expo})`);
+            this.#logger.log(`Price updated successfully! TX: ${result.transactionHash}`);
+            this.#logger.log(`  Gas used: ${result.gasUsed}`);
+            this.#logger.log(`  New price: ${priceData.price.price} (expo: ${priceData.price.expo})`);
         } catch (error) {
             // SEC-04: Sanitize error messages to prevent information leakage
             const safeMessage = sanitizeErrorMessage(error, 'Failed to update price');
-            console.error(safeMessage);
+            this.#logger.error(safeMessage);
             throw new Error(safeMessage);
         }
     }
@@ -503,44 +518,55 @@ export class HermesClient {
     /**
      * Start automatic price updates
      */
-    async start(): Promise<void> {
-        if (this.isRunning) {
-            console.log("Hermes client is already running");
+    async start(options?: { signal?: AbortSignal }): Promise<void> {
+        if (this.#isRunning) {
+            this.#logger.log("Hermes client is already running");
             return;
         }
 
-        if (!this.client) {
-            await this.initialize();
-        }
+        // impotant to be set before any async operation to prevent multiple concurrent starts
+        this.#isRunning = true;
 
-        this.isRunning = true;
-        console.log(
-            `Starting automatic updates every ${this.config.updateIntervalMs / 1000}s`
-        );
-
-        // Initial update
-        await this.updatePrice();
-
-        // Schedule periodic updates
-        this.updateTimer = setInterval(async () => {
-            try {
-                await this.updatePrice();
-            } catch (error) {
-                console.error("Error in scheduled update:", error);
+        options?.signal?.addEventListener("abort", () => {
+            if (this.#updateTimer) {
+                clearTimeout(this.#updateTimer);
+                this.#updateTimer = undefined;
             }
-        }, this.config.updateIntervalMs);
-    }
+            this.#isRunning = false;
+            this.#logger.log("Hermes client stopped");
+        }, { once: true });
 
-    /**
-     * Stop automatic price updates
-     */
-    stop(): void {
-        if (this.updateTimer) {
-            clearInterval(this.updateTimer);
-            this.updateTimer = undefined;
+        try {
+            if (!this.#cosmClient) {
+                await this.initialize();
+            }
+
+            this.#logger.log(
+                `Starting automatic updates every ${this.#config.updateIntervalMs / 1000}s`
+            );
+
+            const updatePrice = async () => {
+                if (!this.#isRunning) return;
+                try {
+                    await this.updatePrice();
+                } catch (error) {
+                    this.#logger.error("Error in scheduled update:", error);
+                } finally {
+                    this.#updateTimer = undefined;
+                }
+                if (this.#isRunning) {
+                    this.#updateTimer = setTimeout(updatePrice, this.#config.updateIntervalMs);
+                }
+            };
+
+            // Initial update + Schedule periodic updates
+            await updatePrice();
+        } catch (error) {
+            this.#isRunning = false;
+            const safeMessage = sanitizeErrorMessage(error, 'Failed to start Hermes client');
+            this.#logger.error(safeMessage);
+            throw new Error(safeMessage);
         }
-        this.isRunning = false;
-        console.log("Hermes client stopped");
     }
 
     /**
@@ -555,67 +581,16 @@ export class HermesClient {
         // SEC-08: Only return non-sensitive operational status fields.
         // Never include mnemonic, gasPrice, rpcEndpoint, or full config.
         return {
-            isRunning: this.isRunning,
-            address: this.senderAddress,
-            priceFeedId: this.priceFeedId,
-            contractAddress: this.config.contractAddress,
+            isRunning: this.#isRunning,
+            address: this.#senderAddress,
+            priceFeedId: this.#priceFeedId,
+            contractAddress: this.#config.contractAddress,
         };
     }
 }
 
-// CLI usage example
-async function main() {
-    if (!process.env.CONTRACT_ADDRESS) {
-        console.error("CONTRACT_ADDRESS environment variable is required");
-        process.exit(1);
-    }
-
-    if (!process.env.MNEMONIC) {
-        console.error("MNEMONIC environment variable is required");
-        process.exit(1);
-    }
-
-    // SEC-03: Use safe integer parsing with radix 10 and validation
-    const updateInterval = safeParseInt(process.env.UPDATE_INTERVAL_MS, 'UPDATE_INTERVAL_MS');
-
-    const config: HermesConfig = {
-        rpcEndpoint: process.env.RPC_ENDPOINT || "https://rpc.akashnet.net:443",
-        contractAddress: process.env.CONTRACT_ADDRESS,
-        mnemonic: process.env.MNEMONIC,
-        hermesEndpoint: process.env.HERMES_ENDPOINT,
-        updateIntervalMs: updateInterval,
-    };
-
-    const client = new HermesClient(config);
-
-    // Handle graceful shutdown
-    process.on("SIGINT", () => {
-        console.log("\nShutting down...");
-        client.stop();
-        process.exit(0);
-    });
-
-    // Start the client
-    await client.start();
-}
-
-// Run if executed directly
-if (require.main === module) {
-    main().catch((error) => {
-        // SEC-04: Do not leak stack traces or internal details on fatal errors
-        if (error instanceof Error) {
-            console.error(`Fatal error: ${error.message}`);
-        } else {
-            console.error("Fatal error: an unexpected error occurred");
-        }
-        process.exit(1);
-    });
-}
-
 // Export types for external use
 export type {
-    HermesConfig,
-    HermesResponse,
     PythPriceData,
     DataSourceResponse,
     UpdatePriceFeedMsg,
@@ -628,5 +603,3 @@ export type {
     PriceFeedIdResponse,
     OracleParamsResponse,
 };
-
-export default HermesClient;

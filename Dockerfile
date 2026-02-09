@@ -1,13 +1,12 @@
 # ====================
 # Builder Stage
 # ====================
-FROM node:20-alpine AS builder
+FROM node:24.13.0-alpine AS builder
 
 WORKDIR /app
 
 # Copy package files first for better caching
 COPY package.json package-lock.json ./
-COPY tsconfig.json ./
 
 # SEC-07: Use ci for reproducible builds from lockfile
 RUN npm ci
@@ -51,9 +50,9 @@ USER nodejs
 # Expose port (if needed for health checks)
 EXPOSE 3000
 
-# Health check
+# Health check against the healthcheck server
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "console.log('healthy')" || exit 1
+  CMD wget -qO- http://localhost:3000/health || exit 1
 
-# Start the client
-CMD ["node", "dist/hermes-client.js"]
+# Start the daemon
+CMD ["node", "dist/cli.js", "daemon"]

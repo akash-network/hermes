@@ -9,11 +9,10 @@
     },
     "scripts": {
         "build": "tsc",
-        "start": "node dist/hermes-client.js",
-        "dev": "ts-node src/hermes-client.ts",
-        "watch": "tsc --watch",
+        "start": "node dist/daemon.js",
+        "dev": "node --experimental-strip-types --watch src/cli.ts daemon",
         "clean": "rm -rf dist",
-        "cli": "ts-node src/cli.ts",
+        "cli": "node --experimental-strip-types src/cli.ts",
         "cli:update": "npm run cli -- update",
         "cli:query": "npm run cli -- query",
         "cli:status": "npm run cli -- status",
@@ -28,20 +27,25 @@
         "oracle",
         "price-feed"
     ],
-    "author": "",
+    "author": "Akash Network",
     "license": "Apache-2.0",
     "dependencies": {
         "@cosmjs/cosmwasm-stargate": "^0.38.0",
         "@cosmjs/proto-signing": "^0.38.0",
         "@cosmjs/stargate": "^0.38.0",
-        "axios": "^1.7.0",
         "commander": "^12.0.0"
     },
     "devDependencies": {
-        "@types/node": "^22.0.0",
+        "@types/node": "^24.0.0",
         "@vitest/coverage-v8": "^4.0.18",
-        "ts-node": "^10.9.0",
-        "typescript": "^5.0.0",
-        "vitest": "^4.0.18"
+        "typescript": "^5.9.0",
+        "vitest": "^4.0.18",
+        "vitest-mock-extended": "^3.1.0"
+    },
+    "engines": {
+        "node": "^24.13.0"
+    },
+    "volta": {
+        "node": "24.13.0"
     }
 }
