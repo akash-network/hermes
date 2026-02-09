@@ -1,4 +1,6 @@
 import http from 'node:http';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import type { CommandConfig } from "./command-config.ts";
 
 export async function daemonCommand(config: CommandConfig): Promise<void> {
@@ -21,15 +23,19 @@ export async function daemonCommand(config: CommandConfig): Promise<void> {
         server.close(() => config.logger?.log('Health check server stopped'));
     }, { once: true });
     await client.start({ signal: config.signal });
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
         if (config.signal.aborted) return resolve();
-        server.listen(3000, () => {
-            config.logger?.log('Health check endpoint available at http://localhost:3000/health');
+        server.once('error', reject);
+        server.listen(config.healthcheckPort, () => {
             resolve();
+            server.off('error', reject);
+            config.logger?.log(`Health check endpoint available at http://localhost:${(server.address() as AddressInfo).port}/health`);
         });
     });
     if (config.signal.aborted && server.listening) {
         await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    } else if (server.listening) {
+        config.logger?.log('Daemon started. Press Ctrl+C to stop.\n');
+        await once(server, 'close');
     }
-    config.logger?.log('Daemon started. Press Ctrl+C to stop.\n');
 }

@@ -177,6 +177,7 @@ akash query wasm contract-state smart $CONTRACT_ADDRESS '{"get_config":{}}'
 | `UPDATE_INTERVAL_MS` | No | `300000` | Update interval (5 min) |
 | `GAS_PRICE` | No | `0.025uakt` | Gas price |
 | `DENOM` | No | `uakt` | Token denomination |
+| `HEALTHCHECK_PORT` | No | 3000 | healthcheck server port |
 
 ### Update Frequency
 
