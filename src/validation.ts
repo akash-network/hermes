@@ -6,7 +6,7 @@
  * Validate that a URL uses HTTPS and has a valid structure.
  * Prevents SSRF by rejecting non-HTTPS schemes and private/internal addresses.
  */
-export function validateEndpointUrl(url: string, fieldName: string): string {
+export function validateEndpointUrl(url: string, fieldName: string, onlySecureEndpoints = true): string {
     let parsed: URL;
     try {
         parsed = new URL(url);
@@ -14,20 +14,16 @@ export function validateEndpointUrl(url: string, fieldName: string): string {
         throw new Error(`Invalid ${fieldName}: not a valid URL`);
     }
 
-    // In development mode, allow HTTP and private addresses
-    const isDev = process.env.NODE_ENV !== 'production';
-
-    if (!isDev && parsed.protocol !== 'https:') {
+    if (onlySecureEndpoints && parsed.protocol !== 'https:') {
         throw new Error(`Invalid ${fieldName}: only HTTPS endpoints are allowed`);
     }
 
-    // Allow http or https in dev, only https in production
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
         throw new Error(`Invalid ${fieldName}: only HTTP/HTTPS endpoints are allowed`);
     }
 
-    // Block private/internal IP ranges to prevent SSRF (production only)
-    if (!isDev) {
+    // When onlySecureEndpoints is enabled, block private/internal IP ranges to prevent SSRF
+    if (onlySecureEndpoints) {
         const hostname = parsed.hostname.toLowerCase();
         const blockedPatterns = [
             /^localhost$/,
@@ -94,7 +90,7 @@ export function safeParseInt(value: string | undefined, fieldName: string): numb
 
     const parsed = parseInt(value, 10);
 
-    if (isNaN(parsed) || !isFinite(parsed)) {
+    if (Number.isNaN(parsed) || !Number.isFinite(parsed)) {
         throw new Error(`Invalid ${fieldName}: must be a valid integer`);
     }
 
@@ -111,6 +107,10 @@ export function safeParseInt(value: string | undefined, fieldName: string): numb
 }
 
 /**
+ * Regexp to detect potential mnemonic phrases (12 or 24 words, lowercase, space-separated).
+ */
+const MNEMONIC_REGEX = /\b([a-z]{3,}\s+){11,23}[a-z]{3,}\b/g;
+/**
  * Sanitize an error message to avoid leaking internal details.
  * Strips stack traces, internal paths, and API response bodies.
  */
@@ -123,6 +123,8 @@ export function sanitizeErrorMessage(error: unknown, context: string): string {
         msg = msg.replace(/\n\s+at .+/g, '');
         // Strip potential API response data
         msg = msg.replace(/\{[^}]*"[^"]*"[^}]*\}/g, '[response data]');
+        // Strip possible mnemonic phrases (12 or 24 words)
+        msg = msg.replace(MNEMONIC_REGEX, '[mnemonic]');
         return `${context}: ${msg}`;
     }
     return `${context}: an unexpected error occurred`;

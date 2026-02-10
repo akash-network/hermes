@@ -177,6 +177,7 @@ akash query wasm contract-state smart $CONTRACT_ADDRESS '{"get_config":{}}'
 | `UPDATE_INTERVAL_MS` | No | `300000` | Update interval (5 min) |
 | `GAS_PRICE` | No | `0.025uakt` | Gas price |
 | `DENOM` | No | `uakt` | Token denomination |
+| `HEALTHCHECK_PORT` | No | 3000 | healthcheck server port |
 
 ### Update Frequency
 
@@ -248,10 +249,10 @@ UPDATE_INTERVAL_MS=900000   # 15 min → 67% cost savings
 
 ### Wallet Security
 
-✅ **Use dedicated wallet** - Create separate wallet for oracle updates only  
-✅ **Limit funding** - Only keep necessary AKT (monthly costs + buffer)  
-✅ **Secure mnemonic** - Use environment variables or secrets manager  
-✅ **Never commit .env** - Already in .gitignore  
+✅ **Use dedicated wallet** - Create separate wallet for oracle updates only
+✅ **Limit funding** - Only keep necessary AKT (monthly costs + buffer)
+✅ **Secure mnemonic** - Use environment variables or secrets manager
+✅ **Never commit .env** - Already in .gitignore
 ✅ **Monitor activity** - Set up alerts for unusual transactions
 
 ### Best Practices
@@ -260,7 +261,7 @@ UPDATE_INTERVAL_MS=900000   # 15 min → 67% cost savings
 # DON'T: Store mnemonic in code
 const mnemonic = "word1 word2 word3..."
 
-# DO: Load from environment
+# DO: Load from environment (not secure for production)
 const mnemonic = process.env.MNEMONIC
 
 # BETTER: Use secrets manager (production)

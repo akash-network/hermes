@@ -7,7 +7,7 @@ import {
     sanitizeErrorMessage,
     validateMnemonicFormat,
     validateContractAddress,
-} from './validation';
+} from './validation.ts';
 
 // ============================================================
 // SEC-02: Endpoint URL validation (SSRF prevention)

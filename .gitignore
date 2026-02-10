@@ -17,3 +17,6 @@ yarn-error.log*
 # IDE
 .vscode/*
 .idea/*
+
+coverage/
+.DS_Store
