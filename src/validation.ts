@@ -14,11 +14,11 @@ export function validateEndpointUrl(url: string, fieldName: string, onlySecureEn
         throw new Error(`Invalid ${fieldName}: not a valid URL`);
     }
 
-    if (onlySecureEndpoints && parsed.protocol !== 'https:') {
+    if (onlySecureEndpoints && parsed.protocol !== "https:") {
         throw new Error(`Invalid ${fieldName}: only HTTPS endpoints are allowed`);
     }
 
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
         throw new Error(`Invalid ${fieldName}: only HTTP/HTTPS endpoints are allowed`);
     }
 
@@ -57,7 +57,7 @@ export function validateAkashAddress(address: string): string {
     // Akash addresses: "akash1" prefix + 38 chars of bech32 data
     const akashAddressRegex = /^akash1[a-z0-9]{38}$/;
     if (!akashAddressRegex.test(address)) {
-        throw new Error('Invalid address format: must be a valid Akash address (akash1...)');
+        throw new Error("Invalid address format: must be a valid Akash address (akash1...)");
     }
     return address;
 }
@@ -68,12 +68,12 @@ export function validateAkashAddress(address: string): string {
 export function validateFeeAmount(fee: string): string {
     // Must be a non-negative integer string (Uint256 serialized as string in CosmWasm)
     if (!/^\d+$/.test(fee)) {
-        throw new Error('Invalid fee: must be a non-negative integer string');
+        throw new Error("Invalid fee: must be a non-negative integer string");
     }
 
     // Must not be excessively large (prevent abuse)
     if (fee.length > 78) { // max Uint256 is 78 digits
-        throw new Error('Invalid fee: value exceeds maximum allowed');
+        throw new Error("Invalid fee: value exceeds maximum allowed");
     }
 
     return fee;
@@ -84,7 +84,7 @@ export function validateFeeAmount(fee: string): string {
  * Returns undefined if the value is not a valid positive integer.
  */
 export function safeParseInt(value: string | undefined, fieldName: string): number | undefined {
-    if (value === undefined || value === '') {
+    if (value === undefined || value === "") {
         return undefined;
     }
 
@@ -118,13 +118,13 @@ export function sanitizeErrorMessage(error: unknown, context: string): string {
     if (error instanceof Error) {
         // Strip any file paths from the message
         let msg = error.message;
-        msg = msg.replace(/\/[^\s:]+\.(ts|js|json)/g, '[path]');
+        msg = msg.replace(/\/[^\s:]+\.(ts|js|json)/g, "[path]");
         // Strip any stack trace info
-        msg = msg.replace(/\n\s+at .+/g, '');
+        msg = msg.replace(/\n\s+at .+/g, "");
         // Strip potential API response data
-        msg = msg.replace(/\{[^}]*"[^"]*"[^}]*\}/g, '[response data]');
+        msg = msg.replace(/\{[^}]*"[^"]*"[^}]*\}/g, "[response data]");
         // Strip possible mnemonic phrases (12 or 24 words)
-        msg = msg.replace(MNEMONIC_REGEX, '[mnemonic]');
+        msg = msg.replace(MNEMONIC_REGEX, "[mnemonic]");
         return `${context}: ${msg}`;
     }
     return `${context}: an unexpected error occurred`;
@@ -137,12 +137,12 @@ export function sanitizeErrorMessage(error: unknown, context: string): string {
 export function validateMnemonicFormat(mnemonic: string): void {
     const words = mnemonic.trim().split(/\s+/);
     if (words.length !== 12 && words.length !== 24) {
-        throw new Error('Invalid mnemonic: must be 12 or 24 words');
+        throw new Error("Invalid mnemonic: must be 12 or 24 words");
     }
     // Basic check that each word is alphabetic (BIP39 words are lowercase alpha)
     for (const word of words) {
         if (!/^[a-z]+$/.test(word)) {
-            throw new Error('Invalid mnemonic: contains invalid characters');
+            throw new Error("Invalid mnemonic: contains invalid characters");
         }
     }
 }
@@ -154,7 +154,7 @@ export function validateContractAddress(address: string): string {
     // Contract addresses on Akash follow the same bech32 format
     const contractAddressRegex = /^akash1[a-z0-9]{38,58}$/;
     if (!contractAddressRegex.test(address)) {
-        throw new Error('Invalid contract address format: must be a valid Akash address');
+        throw new Error("Invalid contract address format: must be a valid Akash address");
     }
     return address;
 }

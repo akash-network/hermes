@@ -1,8 +1,8 @@
 import { type CommandConfig, parseConfig } from "./command-config.ts";
 
 export const createCommandBuilder = ({ process, console }: CreateCommandBuilderOptions) => {
-  return function command<T extends unknown[]>(fn: (config: CommandConfig, ...args: T) => Promise<void>) {
-      return async (...args: [...T, Command]) => {
+    return function command<T extends unknown[]>(fn: (config: CommandConfig, ...args: T) => Promise<void>) {
+        return async (...args: [...T, Command]) => {
             const command = args.pop() as Command;
             const result = parseConfig(process.env);
 
@@ -15,18 +15,18 @@ export const createCommandBuilder = ({ process, console }: CreateCommandBuilderO
             let exitCode = 0;
             const abortController = new AbortController();
 
-            process.once('SIGINT', () => {
+            process.once("SIGINT", () => {
                 abortController.abort();
             });
-            process.once('SIGTERM', () => {
+            process.once("SIGTERM", () => {
                 abortController.abort();
             });
 
             try {
                 const config: CommandConfig = {
-                  ...result.value,
-                  signal: abortController.signal,
-                  logger: console
+                    ...result.value,
+                    signal: abortController.signal,
+                    logger: console,
                 };
                 await fn(config, ...(args as unknown as T));
             } catch (error) {
@@ -42,14 +42,14 @@ export const createCommandBuilder = ({ process, console }: CreateCommandBuilderO
 
             process.exit(exitCode);
         };
-    }
-}
+    };
+};
 
 export interface CreateCommandBuilderOptions {
-  process: Pick<NodeJS.Process, 'env' | 'exit' | 'once'>;
-  console: Console;
+    process: Pick<NodeJS.Process, "env" | "exit" | "once">;
+    console: Console;
 }
 
 interface Command {
-  name: () => string;
+    name: () => string;
 }

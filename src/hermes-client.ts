@@ -49,7 +49,7 @@ export interface HermesConfig {
     /**
      * Optional logger for informational messages. Should implement log, error, and warn methods.
      */
-    logger?: Pick<Console, 'log' | 'error' | 'warn'>;
+    logger?: Pick<Console, "log" | "error" | "warn">;
     /**
      * Optional custom connectWithSigner function for testing or advanced use cases. Defaults to SigningCosmWasmClient.connectWithSigner.
      */
@@ -166,12 +166,12 @@ export class HermesClient {
     #cosmClient?: SigningCosmWasmClient;
     #wallet?: DirectSecp256k1HdWallet;
     #senderAddress?: string;
-    readonly #config: Required<Omit<HermesConfig, 'fetch' | 'logger' | 'connectWithSigner'>>;
+    readonly #config: Required<Omit<HermesConfig, "fetch" | "logger" | "connectWithSigner">>;
     #priceFeedId?: string;
     #isRunning = false;
     #updateTimer?: NodeJS.Timeout;
-    #fetch: Exclude<HermesConfig['fetch'], undefined>;
-    #logger: Exclude<HermesConfig['logger'], undefined>;
+    #fetch: Exclude<HermesConfig["fetch"], undefined>;
+    #logger: Exclude<HermesConfig["logger"], undefined>;
     #connectWithSigner: typeof SigningCosmWasmClient.connectWithSigner;
 
     static async connect(config: HermesConfig): Promise<HermesClient> {
@@ -183,9 +183,9 @@ export class HermesClient {
     constructor(config: HermesConfig) {
         const onlySecureEndpoints = config.onlySecureEndpoints ?? true;
         // SEC-02: Validate endpoint URLs to prevent SSRF
-        validateEndpointUrl(config.rpcEndpoint, 'RPC endpoint', onlySecureEndpoints);
+        validateEndpointUrl(config.rpcEndpoint, "RPC endpoint", onlySecureEndpoints);
         if (config.hermesEndpoint) {
-            validateEndpointUrl(config.hermesEndpoint, 'Hermes endpoint', onlySecureEndpoints);
+            validateEndpointUrl(config.hermesEndpoint, "Hermes endpoint", onlySecureEndpoints);
         }
 
         // SEC-01: Validate mnemonic format without logging it
@@ -194,8 +194,8 @@ export class HermesClient {
 
         // SEC-03: Validate interval if provided
         const interval = config.updateIntervalMs ?? UPDATE_INTERVAL_MS;
-        if (typeof interval !== 'number' || Number.isNaN(interval) || !Number.isFinite(interval) || interval <= 0) {
-            throw new Error('Invalid update interval: must be a positive number');
+        if (typeof interval !== "number" || Number.isNaN(interval) || !Number.isFinite(interval) || interval <= 0) {
+            throw new Error("Invalid update interval: must be a positive number");
         }
 
         this.#config = {
@@ -221,7 +221,7 @@ export class HermesClient {
             // Create wallet from mnemonic
             this.#wallet = await DirectSecp256k1HdWallet.fromMnemonic(
                 this.#config.mnemonic,
-                { prefix: "akash" }
+                { prefix: "akash" },
             );
 
             // Get sender address
@@ -235,7 +235,7 @@ export class HermesClient {
                 this.#wallet,
                 {
                     gasPrice: GasPrice.fromString(this.#config.gasPrice),
-                }
+                },
             );
             this.#logger.log("Connected to chain successfully");
 
@@ -245,7 +245,7 @@ export class HermesClient {
             this.#logger.log("Hermes client initialized successfully");
         } catch (error) {
             // SEC-04: Sanitize error messages to prevent information leakage
-            const safeMessage = sanitizeErrorMessage(error, 'Failed to initialize Hermes client');
+            const safeMessage = sanitizeErrorMessage(error, "Failed to initialize Hermes client");
             this.#logger.error(safeMessage);
             throw new Error(safeMessage);
         }
@@ -257,7 +257,7 @@ export class HermesClient {
     async #fetchPriceFeedId(): Promise<void> {
         const config: ConfigResponse = await this.#getCosmClient().queryContractSmart(
             this.#config.contractAddress,
-            { get_config: {} }
+            { get_config: {} },
         );
 
         this.#priceFeedId = config.price_feed_id;
@@ -279,15 +279,15 @@ export class HermesClient {
 
         // Request base64 encoding for VAA data (compatible with CosmWasm Binary)
         const params = new URLSearchParams({
-            'ids[]': this.#priceFeedId,
+            "ids[]": this.#priceFeedId,
             encoding: "base64",
         });
         const response = await this.#fetch(`${this.#config.hermesEndpoint}/v2/updates/price/latest?${params.toString()}`);
 
         if (!response.ok) {
-            const statusText = response.status ? ` (HTTP ${response.status})` : '';
+            const statusText = response.status ? ` (HTTP ${response.status})` : "";
             throw new Error(
-                `Failed to fetch from Hermes${statusText}: price data unavailable`
+                `Failed to fetch from Hermes${statusText}: price data unavailable`,
             );
         }
 
@@ -305,13 +305,13 @@ export class HermesClient {
         const vaa: string = data.binary.data[0];
 
         this.#logger.log(
-            `Fetched price from Hermes: ${priceData.price.price} (expo: ${priceData.price.expo})`
+            `Fetched price from Hermes: ${priceData.price.price} (expo: ${priceData.price.expo})`,
         );
         this.#logger.log(
-            `  Confidence: ${priceData.price.conf}, Publish time: ${priceData.price.publish_time}`
+            `  Confidence: ${priceData.price.conf}, Publish time: ${priceData.price.publish_time}`,
         );
         this.#logger.log(
-            `  VAA size: ${vaa.length} bytes (base64)`
+            `  VAA size: ${vaa.length} bytes (base64)`,
         );
 
         return { priceData, vaa };
@@ -330,7 +330,7 @@ export class HermesClient {
     async queryCurrentPrice(): Promise<PriceResponse> {
         const price: PriceResponse = await this.#getCosmClient().queryContractSmart(
             this.#config.contractAddress,
-            { get_price: {} }
+            { get_price: {} },
         );
 
         return price;
@@ -342,7 +342,7 @@ export class HermesClient {
     async queryPriceFeed(): Promise<PriceFeedResponse> {
         const feed: PriceFeedResponse = await this.#getCosmClient().queryContractSmart(
             this.#config.contractAddress,
-            { get_price_feed: {} }
+            { get_price_feed: {} },
         );
 
         return feed;
@@ -354,7 +354,7 @@ export class HermesClient {
     async queryConfig(): Promise<ConfigResponse> {
         const config: ConfigResponse = await this.#getCosmClient().queryContractSmart(
             this.#config.contractAddress,
-            { get_config: {} }
+            { get_config: {} },
         );
 
         return config;
@@ -366,7 +366,7 @@ export class HermesClient {
     async queryOracleParams(): Promise<OracleParamsResponse> {
         const params: OracleParamsResponse = await this.#getCosmClient().queryContractSmart(
             this.#config.contractAddress,
-            { get_oracle_params: {} }
+            { get_oracle_params: {} },
         );
 
         return params;
@@ -388,7 +388,7 @@ export class HermesClient {
             this.#senderAddress,
             this.#config.contractAddress,
             msg,
-            "auto"
+            "auto",
         );
 
         return result.transactionHash;
@@ -415,7 +415,7 @@ export class HermesClient {
             this.#senderAddress,
             this.#config.contractAddress,
             msg,
-            "auto"
+            "auto",
         );
 
         return result.transactionHash;
@@ -442,7 +442,7 @@ export class HermesClient {
             this.#senderAddress,
             this.#config.contractAddress,
             msg,
-            "auto"
+            "auto",
         );
 
         return result.transactionHash;
@@ -472,7 +472,7 @@ export class HermesClient {
             // Check if update is needed (publish_time must be newer)
             if (priceData.price.publish_time <= currentPrice.publish_time) {
                 this.#logger.log(
-                    `Price already up to date (publish_time: ${currentPrice.publish_time})`
+                    `Price already up to date (publish_time: ${currentPrice.publish_time})`,
                 );
                 return;
             }
@@ -492,7 +492,7 @@ export class HermesClient {
             // Get config to determine update fee
             const config: ConfigResponse = await this.#getCosmClient().queryContractSmart(
                 this.#config.contractAddress,
-                { get_config: {} }
+                { get_config: {} },
             );
 
             // Execute update
@@ -504,7 +504,7 @@ export class HermesClient {
                 msg,
                 "auto",
                 undefined,
-                [{ denom: this.#config.denom, amount: config.update_fee }]
+                [{ denom: this.#config.denom, amount: config.update_fee }],
             );
 
             this.#logger.log(`Price updated successfully! TX: ${result.transactionHash}`);
@@ -512,7 +512,7 @@ export class HermesClient {
             this.#logger.log(`  New price: ${priceData.price.price} (expo: ${priceData.price.expo})`);
         } catch (error) {
             // SEC-04: Sanitize error messages to prevent information leakage
-            const safeMessage = sanitizeErrorMessage(error, 'Failed to update price');
+            const safeMessage = sanitizeErrorMessage(error, "Failed to update price");
             this.#logger.error(safeMessage);
             throw new Error(safeMessage);
         }
@@ -545,7 +545,7 @@ export class HermesClient {
             }
 
             this.#logger.log(
-                `Starting automatic updates every ${this.#config.updateIntervalMs / 1000}s`
+                `Starting automatic updates every ${this.#config.updateIntervalMs / 1000}s`,
             );
 
             const updatePrice = async () => {
@@ -566,7 +566,7 @@ export class HermesClient {
             await updatePrice();
         } catch (error) {
             this.#isRunning = false;
-            const safeMessage = sanitizeErrorMessage(error, 'Failed to start Hermes client');
+            const safeMessage = sanitizeErrorMessage(error, "Failed to start Hermes client");
             this.#logger.error(safeMessage);
             throw new Error(safeMessage);
         }

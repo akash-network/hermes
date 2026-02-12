@@ -8,6 +8,6 @@ export async function adminUpdateFee(config: CommandConfig, newFee: string): Pro
 
     const client = await config.createHermesClient(config);
     const txHash = await client.updateFee(newFee);
-    config.logger?.log(`Fee updated successfully!`);
+    config.logger?.log("Fee updated successfully!");
     config.logger?.log(`TX: ${txHash}`);
 }
