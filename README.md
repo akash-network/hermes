@@ -172,7 +172,7 @@ akash query wasm contract-state smart $CONTRACT_ADDRESS '{"get_config":{}}'
 |----------|----------|---------|-------------|
 | `RPC_ENDPOINT` | Yes | - | Akash RPC endpoint |
 | `CONTRACT_ADDRESS` | Yes | - | Oracle contract address |
-| `MNEMONIC` | Yes | - | Wallet mnemonic (12/24 words) |
+| `WALLET_SECRET` | Yes | - | Either `privateKey:<private key in hex format>` or `mnemonic:<12/24 words>` |
 | `HERMES_ENDPOINT` | No | `https://hermes.pyth.network` | Pyth Hermes API |
 | `UPDATE_INTERVAL_MS` | No | `300000` | Update interval (5 min) |
 | `GAS_PRICE` | No | `0.025uakt` | Gas price |

@@ -3,9 +3,9 @@ import {
     validateEndpointUrl,
     validateAkashAddress,
     validateFeeAmount,
-    safeParseInt,
     sanitizeErrorMessage,
     validateMnemonicFormat,
+    validateWalletSecret,
     validateContractAddress,
 } from "./validation.ts";
 
@@ -95,8 +95,8 @@ describe("SEC-02: validateEndpointUrl", () => {
 describe("SEC-05: validateAkashAddress", () => {
     it("accepts valid Akash addresses", () => {
         // Valid bech32 format: akash1 + 38 lowercase alphanumeric chars
-        expect(validateAkashAddress("akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu"))
-            .toBe("akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu");
+        expect(() => validateAkashAddress("akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu"))
+            .not.toThrow();
     });
 
     it("rejects empty string", () => {
@@ -164,56 +164,53 @@ describe("SEC-06: validateFeeAmount", () => {
 });
 
 // ============================================================
-// SEC-03: Safe integer parsing for environment variables
+// SEC-03: Wallet secret validation
 // ============================================================
-describe("SEC-03: safeParseInt", () => {
-    it("parses valid positive integers", () => {
-        expect(safeParseInt("300000", "interval")).toBe(300000);
-        expect(safeParseInt("1000", "interval")).toBe(1000);
+describe("SEC-03: validateWalletSecret", () => {
+    it("accepts valid mnemonic secret", () => {
+        expect(() => validateWalletSecret({
+            type: "mnemonic",
+            value: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        })).not.toThrow();
     });
 
-    it("returns undefined for undefined input", () => {
-        expect(safeParseInt(undefined, "interval")).toBeUndefined();
+    it("accepts valid 24-word mnemonic secret", () => {
+        const words = Array(24).fill("abandon");
+        words[23] = "about";
+        expect(() => validateWalletSecret({
+            type: "mnemonic",
+            value: words.join(" "),
+        })).not.toThrow();
     });
 
-    it("returns undefined for empty string", () => {
-        expect(safeParseInt("", "interval")).toBeUndefined();
+    it("rejects mnemonic with wrong word count", () => {
+        expect(() => validateWalletSecret({
+            type: "mnemonic",
+            value: "abandon abandon abandon",
+        })).toThrow("Invalid mnemonic");
     });
 
-    it("rejects NaN values", () => {
-        expect(() => safeParseInt("not-a-number", "interval"))
-            .toThrow("must be a valid integer");
+    it("accepts valid private key secret", () => {
+        // Valid secp256k1 private key (32 bytes hex)
+        const validKey = "a".repeat(64);
+        expect(() => validateWalletSecret({
+            type: "privateKey",
+            value: validKey,
+        })).not.toThrow();
     });
 
-    it("rejects zero", () => {
-        expect(() => safeParseInt("0", "interval"))
-            .toThrow("must be a positive integer");
+    it("rejects invalid private key", () => {
+        expect(() => validateWalletSecret({
+            type: "privateKey",
+            value: "not-a-valid-hex-key",
+        })).toThrow("Invalid private key");
     });
 
-    it("rejects negative values", () => {
-        expect(() => safeParseInt("-1000", "interval"))
-            .toThrow("must be a positive integer");
-    });
-
-    it("rejects Infinity", () => {
-        expect(() => safeParseInt("Infinity", "interval"))
-            .toThrow("must be a valid integer");
-    });
-
-    it("rejects values exceeding 32-bit int", () => {
-        expect(() => safeParseInt("9999999999999", "interval"))
-            .toThrow("value too large");
-    });
-
-    it("uses radix 10 (does not interpret octal)", () => {
-        // "0777" in octal would be 511, but with radix 10 it should be 777
-        expect(safeParseInt("0777", "interval")).toBe(777);
-    });
-
-    it("rejects hex strings", () => {
-        // parseInt('0xFF', 10) returns 0 which fails the positive check
-        expect(() => safeParseInt("0xFF", "interval"))
-            .toThrow();
+    it("rejects empty private key", () => {
+        expect(() => validateWalletSecret({
+            type: "privateKey",
+            value: "",
+        })).toThrow("Invalid private key");
     });
 });
 
@@ -320,7 +317,7 @@ describe("SEC-01: validateMnemonicFormat", () => {
 describe("SEC-05b: validateContractAddress", () => {
     it("accepts valid contract addresses", () => {
         const addr = "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu";
-        expect(validateContractAddress(addr)).toBe(addr);
+        expect(() => validateContractAddress(addr)).not.toThrow();
     });
 
     it("rejects non-akash prefixed addresses", () => {

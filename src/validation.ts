@@ -1,3 +1,5 @@
+import { secp256k1 } from "@noble/curves/secp256k1";
+
 /**
  * Input validation and sanitization utilities for security-critical operations
  */
@@ -80,33 +82,6 @@ export function validateFeeAmount(fee: string): string {
 }
 
 /**
- * Safely parse an integer from an environment variable string.
- * Returns undefined if the value is not a valid positive integer.
- */
-export function safeParseInt(value: string | undefined, fieldName: string): number | undefined {
-    if (value === undefined || value === "") {
-        return undefined;
-    }
-
-    const parsed = parseInt(value, 10);
-
-    if (Number.isNaN(parsed) || !Number.isFinite(parsed)) {
-        throw new Error(`Invalid ${fieldName}: must be a valid integer`);
-    }
-
-    if (parsed <= 0) {
-        throw new Error(`Invalid ${fieldName}: must be a positive integer`);
-    }
-
-    // Guard against values that are unreasonably large
-    if (parsed > 2147483647) { // max safe 32-bit int
-        throw new Error(`Invalid ${fieldName}: value too large`);
-    }
-
-    return parsed;
-}
-
-/**
  * Regexp to detect potential mnemonic phrases (12 or 24 words, lowercase, space-separated).
  */
 const MNEMONIC_REGEX = /\b([a-z]{3,}\s+){11,23}[a-z]{3,}\b/g;
@@ -147,14 +122,28 @@ export function validateMnemonicFormat(mnemonic: string): void {
     }
 }
 
+export function validateWalletSecret(secret: { type: "mnemonic" | "privateKey"; value: string }): void {
+    if (secret.type === "mnemonic") {
+        validateMnemonicFormat(secret.value);
+        return;
+    }
+
+    if (!/^[0-9a-fA-F]{64}$/.test(secret.value)) {
+        throw new Error("Invalid private key: must be a 64-character hexadecimal string");
+    }
+
+    if (!secp256k1.utils.isValidSecretKey(Buffer.from(secret.value, "hex"))) {
+        throw new Error("Invalid private key: must be secp256k1 compliant");
+    }
+}
+
 /**
  * Validate a contract address (Akash bech32 format, same as account but allows longer for contract addresses).
  */
-export function validateContractAddress(address: string): string {
+export function validateContractAddress(address: string): void {
     // Contract addresses on Akash follow the same bech32 format
     const contractAddressRegex = /^akash1[a-z0-9]{38,58}$/;
     if (!contractAddressRegex.test(address)) {
         throw new Error("Invalid contract address format: must be a valid Akash address");
     }
-    return address;
 }
