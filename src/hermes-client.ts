@@ -11,6 +11,7 @@
  * 4. Relays validated price to x/oracle module
  */
 
+import { performance } from "node:perf_hooks";
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { DirectSecp256k1HdWallet, DirectSecp256k1Wallet, type OfflineDirectSigner } from "@cosmjs/proto-signing";
 import { GasPrice } from "@cosmjs/stargate";
@@ -22,6 +23,7 @@ import {
     sanitizeErrorMessage,
     validateWalletSecret,
 } from "./validation.ts";
+import { priceUpdateCounter, hermesFetchDuration } from "./metrics.ts";
 
 export interface HermesConfig {
     /**
@@ -277,7 +279,16 @@ export class HermesClient {
             "ids[]": this.#priceFeedId,
             encoding: "base64",
         });
-        const response = await this.#fetch(`${this.#config.hermesEndpoint}/v2/updates/price/latest?${params.toString()}`);
+
+        let response: Response;
+        let status = 0;
+        const fetchStart = performance.now();
+        try {
+            response = await this.#fetch(`${this.#config.hermesEndpoint}/v2/updates/price/latest?${params.toString()}`);
+            status = response.status;
+        } finally {
+            hermesFetchDuration.record(performance.now() - fetchStart, { status });
+        }
 
         if (!response.ok) {
             const statusText = response.status ? ` (HTTP ${response.status})` : "";
@@ -469,6 +480,7 @@ export class HermesClient {
                 this.#logger.log(
                     `Price already up to date (publish_time: ${currentPrice.publish_time})`,
                 );
+                priceUpdateCounter.add(1, { result: "skipped" });
                 return;
             }
 
@@ -505,10 +517,12 @@ export class HermesClient {
             this.#logger.log(`Price updated successfully! TX: ${result.transactionHash}`);
             this.#logger.log(`  Gas used: ${result.gasUsed}`);
             this.#logger.log(`  New price: ${priceData.price.price} (expo: ${priceData.price.expo})`);
+            priceUpdateCounter.add(1, { result: "success" });
         } catch (error) {
             // SEC-04: Sanitize error messages to prevent information leakage
             const safeMessage = sanitizeErrorMessage(error, "Failed to update price");
             this.#logger.error(safeMessage);
+            priceUpdateCounter.add(1, { result: "failure" });
             throw new Error(safeMessage);
         }
     }
