@@ -13,7 +13,10 @@ describe("createCommandBuilder", () => {
         expect(handler).toHaveBeenCalledWith(
             expect.objectContaining({
                 contractAddress: mockProcess.env.CONTRACT_ADDRESS,
-                mnemonic: mockProcess.env.MNEMONIC,
+                walletSecret: {
+                    type: "mnemonic",
+                    value: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+                },
                 signal: expect.any(AbortSignal),
             }),
         );
@@ -22,7 +25,7 @@ describe("createCommandBuilder", () => {
     it("exits with code 1 and logs error when config is invalid", async () => {
         const { command, mockProcess, logger } = setup({
             CONTRACT_ADDRESS: "",
-            MNEMONIC: "",
+            WALLET_SECRET: "",
         });
         const handler = vi.fn();
         const wrappedCommand = command(handler);
@@ -126,7 +129,7 @@ function setup(env?: Record<string, string>) {
     const mockProcess = Object.assign(new EventEmitter(), {
         env: env ?? {
             CONTRACT_ADDRESS: "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
-            MNEMONIC: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+            WALLET_SECRET: "mnemonic:abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         },
         exit: vi.fn(),
     }) as unknown as CreateCommandBuilderOptions["process"] & EventEmitter;

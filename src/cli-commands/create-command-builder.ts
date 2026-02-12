@@ -7,7 +7,7 @@ export const createCommandBuilder = ({ process, console }: CreateCommandBuilderO
             const result = parseConfig(process.env);
 
             if (result.ok === false) {
-                console.error(`Configuration error: ${result.error}`);
+                console.error(`Configuration error:\n${result.error}`);
                 process.exit(1);
                 return;
             }

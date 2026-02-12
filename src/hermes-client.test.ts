@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { mock } from "vitest-mock-extended";
-import { HermesClient, HermesResponse } from "./hermes-client";
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mock } from "vitest-mock-extended";
+import { HermesClient, HermesConfig, HermesResponse } from "./hermes-client";
 
 // ============================================================
 // SEC-01: Mnemonic must never appear in logs or error messages
@@ -12,7 +12,7 @@ describe("SEC-01: Mnemonic leakage prevention", () => {
     it("initialize() error must not contain mnemonic", async () => {
         const { client, logger, stargateClient } = setup({
             rpcEndpoint: "https://invalid-host-that-will-fail.example.com:443",
-            mnemonic: SECRET_MNEMONIC,
+            walletSecret: { type: "mnemonic", value: SECRET_MNEMONIC },
         });
 
         stargateClient.queryContractSmart.mockRejectedValueOnce(new Error(`${SECRET_MNEMONIC} is not valid`));
@@ -56,42 +56,6 @@ describe("SEC-02: Endpoint URL validation in HermesClient", () => {
     it("accepts valid HTTPS endpoints", () => {
         const { client } = setup({
             hermesEndpoint: "https://hermes.pyth.network",
-        });
-        expect(client).toBeDefined();
-    });
-});
-
-// ============================================================
-// SEC-03: UPDATE_INTERVAL_MS parsing must be safe
-// ============================================================
-describe("SEC-03: Safe interval parsing in HermesClient", () => {
-    it("rejects Infinite interval", () => {
-        expect(() => setup({
-            updateIntervalMs: Infinity,
-        })).toThrow();
-    });
-
-    it("rejects non-numeric interval", () => {
-        expect(() => setup({
-            updateIntervalMs: NaN,
-        })).toThrow();
-    });
-
-    it("rejects zero interval", () => {
-        expect(() => setup({
-            updateIntervalMs: 0,
-        })).toThrow();
-    });
-
-    it("rejects negative interval", () => {
-        expect(() => setup({
-            updateIntervalMs: -5000,
-        })).toThrow();
-    });
-
-    it("accepts valid positive interval", () => {
-        const { client } = setup({
-            updateIntervalMs: 300000,
         });
         expect(client).toBeDefined();
     });
@@ -186,38 +150,67 @@ describe("SEC-08: Sensitive data in config exposure", () => {
 
 describe(HermesClient.name, () => {
     describe("constructor", () => {
-        it("allows HTTP endpoints when onlySecureEndpoints is false", () => {
+        it("allows HTTP endpoints when unsafeAllowInsecureEndpoints is true", () => {
             const { client } = setup({
                 rpcEndpoint: "http://rpc.akashnet.net",
-                onlySecureEndpoints: false,
+                unsafeAllowInsecureEndpoints: true,
             });
             expect(client).toBeDefined();
         });
 
-        it("allows private addresses when onlySecureEndpoints is false", () => {
+        it("allows private addresses when unsafeAllowInsecureEndpoints is true", () => {
             const { client } = setup({
                 rpcEndpoint: "http://localhost:26657",
-                onlySecureEndpoints: false,
+                unsafeAllowInsecureEndpoints: true,
             });
             expect(client).toBeDefined();
         });
 
         it("rejects invalid mnemonic word count", () => {
             expect(() => setup({
-                mnemonic: "abandon abandon abandon",
+                walletSecret: { type: "mnemonic", value: "abandon abandon abandon" },
             })).toThrow("Invalid mnemonic");
         });
 
         it("rejects mnemonic with invalid characters", () => {
             expect(() => setup({
-                mnemonic: "Abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon About",
+                walletSecret: { type: "mnemonic", value: "Abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon About" },
             })).toThrow("Invalid mnemonic");
+        });
+
+        it("accepts a valid private key", () => {
+            const { client } = setup({
+                walletSecret: { type: "privateKey", value: "0000000000000000000000000000000000000000000000000000000000000001" },
+            });
+            expect(client).toBeDefined();
+        });
+
+        it("rejects an invalid private key", () => {
+            expect(() => setup({
+                walletSecret: { type: "privateKey", value: "not-a-valid-hex-key" },
+            })).toThrow("Invalid private key");
         });
     });
 
     describe("initialize()", () => {
         it("creates wallet, connects to chain, and fetches price feed ID", async () => {
             const { client, stargateClient } = setup();
+
+            await client.initialize();
+
+            expect(stargateClient.queryContractSmart).toHaveBeenCalledWith(
+                "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
+                { get_config: {} },
+            );
+            const status = client.getStatus();
+            expect(status.priceFeedId).toBe("test-feed-id");
+            expect(status.address).toMatch(/^akash1[0-9a-z]{38}$/);
+        });
+
+        it("creates wallet from private key, connects to chain, and fetches price feed ID", async () => {
+            const { client, stargateClient } = setup({
+                walletSecret: { type: "privateKey", value: "0000000000000000000000000000000000000000000000000000000000000001" },
+            });
 
             await client.initialize();
 
@@ -704,15 +697,8 @@ describe(HermesClient.name, () => {
     });
 });
 
-function setup(input?: {
-    mnemonic?: string;
-    gasPrice?: string;
-    contractAddress?: string;
+function setup(input?: Partial<HermesConfig> & {
     priceFeed?: HermesResponse;
-    updateIntervalMs?: number;
-    hermesEndpoint?: string;
-    rpcEndpoint?: string;
-    onlySecureEndpoints?: boolean;
 }) {
     const fetch = vi.fn(async () => new Response(JSON.stringify(input?.priceFeed ?? {
         parsed: [
@@ -729,14 +715,14 @@ function setup(input?: {
     const client = new HermesClient({
         rpcEndpoint: input?.rpcEndpoint ?? "https://rpc.akashnet.net:443",
         contractAddress: input?.contractAddress ?? "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
-        mnemonic: input?.mnemonic ?? "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        walletSecret: input?.walletSecret ?? { type: "mnemonic", value: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" },
         gasPrice: input?.gasPrice ?? "0.025uakt",
         fetch,
         connectWithSigner: async () => stargateClient,
         logger,
-        updateIntervalMs: input?.updateIntervalMs,
-        hermesEndpoint: input?.hermesEndpoint,
-        onlySecureEndpoints: input?.onlySecureEndpoints,
+        updateIntervalMs: input?.updateIntervalMs ?? 300_000,
+        hermesEndpoint: input?.hermesEndpoint ?? "https://hermes.pyth.network",
+        unsafeAllowInsecureEndpoints: input?.unsafeAllowInsecureEndpoints,
     });
 
     return { client, fetch, logger, stargateClient };

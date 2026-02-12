@@ -12,7 +12,7 @@
  */
 
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
-import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+import { DirectSecp256k1HdWallet, DirectSecp256k1Wallet, type OfflineDirectSigner } from "@cosmjs/proto-signing";
 import { GasPrice } from "@cosmjs/stargate";
 import {
     validateEndpointUrl,
@@ -20,26 +20,30 @@ import {
     validateContractAddress,
     validateFeeAmount,
     sanitizeErrorMessage,
-    validateMnemonicFormat,
+    validateWalletSecret,
 } from "./validation.ts";
-// Hermes API endpoint
-const HERMES_API = "https://hermes.pyth.network";
 
-// Price feed update interval (5 minutes)
-const UPDATE_INTERVAL_MS = 5 * 60 * 1000;
-
-// Configuration
 export interface HermesConfig {
     /**
-     * Enforces secure endpoint URLs (HTTPS, no private/internal addresses).
-     * @default true
+     * Allows insecure endpoint URLs (HTTP, private/internal addresses).
+     * @default false
      */
-    onlySecureEndpoints?: boolean;
+    unsafeAllowInsecureEndpoints?: boolean;
     rpcEndpoint: string;
     contractAddress: string;
-    mnemonic: string;
-    hermesEndpoint?: string;
-    updateIntervalMs?: number;
+    walletSecret:
+        | {
+            type: "mnemonic";
+            /** mnemonic phrase for wallet */
+            value: string;
+        }
+        | {
+            type: "privateKey";
+            /** hex-encoded private key for wallet */
+            value: string;
+        };
+    hermesEndpoint: string;
+    updateIntervalMs: number;
     denom?: string;
     gasPrice?: string;
     /**
@@ -164,7 +168,7 @@ interface OracleParamsResponse {
 
 export class HermesClient {
     #cosmClient?: SigningCosmWasmClient;
-    #wallet?: DirectSecp256k1HdWallet;
+    #wallet?: OfflineDirectSigner;
     #senderAddress?: string;
     readonly #config: Required<Omit<HermesConfig, "fetch" | "logger" | "connectWithSigner">>;
     #priceFeedId?: string;
@@ -181,30 +185,18 @@ export class HermesClient {
     }
 
     constructor(config: HermesConfig) {
-        const onlySecureEndpoints = config.onlySecureEndpoints ?? true;
-        // SEC-02: Validate endpoint URLs to prevent SSRF
-        validateEndpointUrl(config.rpcEndpoint, "RPC endpoint", onlySecureEndpoints);
-        if (config.hermesEndpoint) {
-            validateEndpointUrl(config.hermesEndpoint, "Hermes endpoint", onlySecureEndpoints);
-        }
+        const unsafeAllowInsecureEndpoints = config.unsafeAllowInsecureEndpoints ?? false;
 
-        // SEC-01: Validate mnemonic format without logging it
-        validateMnemonicFormat(config.mnemonic);
+        validateEndpointUrl(config.rpcEndpoint, "RPC endpoint", !unsafeAllowInsecureEndpoints);
+        validateEndpointUrl(config.hermesEndpoint, "Hermes endpoint", !unsafeAllowInsecureEndpoints);
+        validateWalletSecret(config.walletSecret);
         validateContractAddress(config.contractAddress);
 
-        // SEC-03: Validate interval if provided
-        const interval = config.updateIntervalMs ?? UPDATE_INTERVAL_MS;
-        if (typeof interval !== "number" || Number.isNaN(interval) || !Number.isFinite(interval) || interval <= 0) {
-            throw new Error("Invalid update interval: must be a positive number");
-        }
-
         this.#config = {
-            hermesEndpoint: HERMES_API,
             denom: "uakt",
             gasPrice: "0.025uakt",
+            unsafeAllowInsecureEndpoints,
             ...config,
-            onlySecureEndpoints: onlySecureEndpoints,
-            updateIntervalMs: interval,
         };
         this.#fetch = config.fetch ?? globalThis.fetch;
         this.#logger = config.logger ?? console;
@@ -218,18 +210,12 @@ export class HermesClient {
         try {
             this.#logger.log("Initializing Hermes client...");
 
-            // Create wallet from mnemonic
-            this.#wallet = await DirectSecp256k1HdWallet.fromMnemonic(
-                this.#config.mnemonic,
-                { prefix: "akash" },
-            );
+            this.#wallet = await this.#createWallet(this.#config.walletSecret);
 
-            // Get sender address
             const [account] = await this.#wallet.getAccounts();
             this.#senderAddress = account.address;
             this.#logger.log(`Using address: ${this.#senderAddress}`);
 
-            // Connect to the chain
             this.#cosmClient = await this.#connectWithSigner(
                 this.#config.rpcEndpoint,
                 this.#wallet,
@@ -239,7 +225,6 @@ export class HermesClient {
             );
             this.#logger.log("Connected to chain successfully");
 
-            // Fetch price feed ID from contract
             await this.#fetchPriceFeedId();
 
             this.#logger.log("Hermes client initialized successfully");
@@ -249,6 +234,16 @@ export class HermesClient {
             this.#logger.error(safeMessage);
             throw new Error(safeMessage);
         }
+    }
+
+    #createWallet(secret: HermesConfig["walletSecret"]): Promise<OfflineDirectSigner> {
+        const prefix = "akash";
+        if (secret.type === "mnemonic") {
+            return DirectSecp256k1HdWallet.fromMnemonic(secret.value, { prefix });
+        }
+
+        const privateKeyBytes = Buffer.from(secret.value, "hex");
+        return DirectSecp256k1Wallet.fromKey(privateKeyBytes, prefix);
     }
 
     /**
