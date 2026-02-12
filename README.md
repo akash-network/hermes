@@ -179,6 +179,28 @@ akash query wasm contract-state smart $CONTRACT_ADDRESS '{"get_config":{}}'
 | `GAS_PRICE` | No | `0.025uakt` | Gas price |
 | `DENOM` | No | `uakt` | Token denomination |
 | `HEALTHCHECK_PORT` | No | 3000 | healthcheck server port |
+| `OTEL_RESOURCE_ATTRIBUTES` | No | <empty> | additional attributes attached to all metrics (e.g., `service.name=hermes,service.version=1.1.0,deployment.environment=production`) |
+
+### Instrumentation
+
+This service exposes a `/health` endpoint that can be polled periodically to check whether the service is healthy. It also exposes a `/metrics` endpoint for collecting service metrics in Prometheus format. The `/metrics` endpoint is only available when the service is run with instrumentation enabled.
+
+Instrumentation is powered by [OpenTelemetry](https://opentelemetry.io/) and collects Node.js runtime metrics (e.g., event loop delay, GC, active handles) with a 5-second monitoring precision. The following resource detectors enrich metrics with contextual metadata:
+
+- **`processDetector`** — process-level attributes such as PID, executable name, and command-line arguments
+- **`envDetector`** — resource attributes from the `OTEL_RESOURCE_ATTRIBUTES` environment variable. This variable allows to set extra labels (e.g., environment, service version.)
+- **`hostDetector`** — host information such as hostname
+- **`containerDetector`** — container ID from the cgroup file when running inside a container (e.g., Docker)
+
+To run the service with instrumentation enabled:
+
+```sh
+# in dev mode
+node --experimental-strip-types --watch --env-file=.env --import ./src/instrumentation.ts src/cli.ts daemon
+
+# compiled
+node --env-file=.env --import ./dist/instrumentation.js dist/cli.js daemon
+```
 
 ### Update Frequency
 
