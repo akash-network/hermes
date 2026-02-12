@@ -77,6 +77,12 @@ describe("daemonCommand", () => {
         expect(logger.log).toHaveBeenCalledWith("Health check server stopped");
     });
 
+    it("stops server immediately if signal is already aborted on startup", async () => {
+        const { config, abortController } = setup();
+        abortController.abort(); // Abort before starting the daemon
+        await expect(daemonCommand(config)).resolves.toBeUndefined();
+    });
+
     function waitForServer(logger: Console) {
         return vi.waitFor(() => {
             expect(logger.log).toHaveBeenCalledWith(

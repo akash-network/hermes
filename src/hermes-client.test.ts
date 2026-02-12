@@ -247,7 +247,7 @@ describe(HermesClient.name, () => {
 
             stargateClient.queryContractSmart
                 .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
-                .mockResolvedValueOnce({ publish_time: 1234567880 })
+                .mockResolvedValueOnce({ price: "12345", conf: "10", expo: -8, publish_time: 1234567880 })
                 .mockResolvedValueOnce({ update_fee: "1", wormhole_contract: "akash1wormhole" });
             stargateClient.execute.mockResolvedValueOnce({
                 transactionHash: "ABCD1234",
@@ -322,6 +322,136 @@ describe(HermesClient.name, () => {
             await expect(client.updatePrice()).rejects.toThrow("Failed to update price");
         });
 
+        describe("priceDeviationTolerance", () => {
+            it("skips update when absolute deviation is within tolerance", async () => {
+                const { client, stargateClient, logger } = setup({
+                    priceDeviationTolerance: { type: "absolute", value: 1.0 },
+                    priceFeed: buildPriceFeed("10000", -2, 2000),
+                });
+                mockForSkip(stargateClient, { price: "10050", expo: -2, publish_time: 1000 });
+
+                await client.initialize();
+                await client.updatePrice();
+
+                expect(stargateClient.execute).not.toHaveBeenCalled();
+                expect(logger.log).toHaveBeenCalledWith(
+                    expect.stringContaining("absolute tolerance"),
+                );
+            });
+
+            it("updates when absolute deviation exceeds tolerance", async () => {
+                const { client, stargateClient } = setup({
+                    priceDeviationTolerance: { type: "absolute", value: 1.0 },
+                    priceFeed: buildPriceFeed("10000", -2, 2000),
+                });
+                mockForUpdate(stargateClient, { price: "10200", expo: -2, publish_time: 1000 });
+
+                await client.initialize();
+                await client.updatePrice();
+
+                expect(stargateClient.execute).toHaveBeenCalledTimes(1);
+            });
+
+            it("skips update when absolute deviation equals tolerance exactly", async () => {
+                const { client, stargateClient, logger } = setup({
+                    priceDeviationTolerance: { type: "absolute", value: 1.0 },
+                    priceFeed: buildPriceFeed("10000", -2, 2000),
+                });
+                mockForSkip(stargateClient, { price: "10100", expo: -2, publish_time: 1000 });
+
+                await client.initialize();
+                await client.updatePrice();
+
+                expect(stargateClient.execute).not.toHaveBeenCalled();
+                expect(logger.log).toHaveBeenCalledWith(
+                    expect.stringContaining("absolute tolerance"),
+                );
+            });
+
+            it("skips update when percentage deviation is within tolerance", async () => {
+                const { client, stargateClient, logger } = setup({
+                    priceDeviationTolerance: { type: "percentage", value: 1 },
+                    priceFeed: buildPriceFeed("10000", -2, 2000),
+                });
+                mockForSkip(stargateClient, { price: "10050", expo: -2, publish_time: 1000 });
+
+                await client.initialize();
+                await client.updatePrice();
+
+                expect(stargateClient.execute).not.toHaveBeenCalled();
+                expect(logger.log).toHaveBeenCalledWith(
+                    expect.stringContaining("percentage tolerance"),
+                );
+            });
+
+            it("updates when percentage deviation exceeds tolerance", async () => {
+                const { client, stargateClient } = setup({
+                    priceDeviationTolerance: { type: "percentage", value: 1 },
+                    priceFeed: buildPriceFeed("10000", -2, 2000),
+                });
+                mockForUpdate(stargateClient, { price: "10500", expo: -2, publish_time: 1000 });
+
+                await client.initialize();
+                await client.updatePrice();
+
+                expect(stargateClient.execute).toHaveBeenCalledTimes(1);
+            });
+
+            it("skips update when percentage deviation equals tolerance exactly", async () => {
+                const { client, stargateClient, logger } = setup({
+                    priceDeviationTolerance: { type: "percentage", value: 1 },
+                    priceFeed: buildPriceFeed("10100", -2, 2000),
+                });
+                mockForSkip(stargateClient, { price: "10000", expo: -2, publish_time: 1000 });
+
+                await client.initialize();
+                await client.updatePrice();
+
+                expect(stargateClient.execute).not.toHaveBeenCalled();
+                expect(logger.log).toHaveBeenCalledWith(
+                    expect.stringContaining("percentage tolerance"),
+                );
+            });
+
+            it("updates on any price difference with default tolerance (absolute 0)", async () => {
+                const { client, stargateClient } = setup({
+                    priceFeed: buildPriceFeed("10001", -2, 2000),
+                });
+                mockForUpdate(stargateClient, { price: "10000", expo: -2, publish_time: 1000 });
+
+                await client.initialize();
+                await client.updatePrice();
+
+                expect(stargateClient.execute).toHaveBeenCalledTimes(1);
+            });
+
+            it("handles different exponents between new and current price", async () => {
+                const { client, stargateClient } = setup({
+                    priceDeviationTolerance: { type: "absolute", value: 1.0 },
+                    priceFeed: buildPriceFeed("1000000", -4, 2000),
+                });
+                mockForUpdate(stargateClient, { price: "10200", expo: -2, publish_time: 1000 });
+
+                await client.initialize();
+                await client.updatePrice();
+
+                expect(stargateClient.execute).toHaveBeenCalledTimes(1);
+            });
+
+            it("handles zero current price when calculating percentage deviation", async () => {
+                const { client, stargateClient } = setup({
+                    priceDeviationTolerance: { type: "percentage", value: 10 },
+                    priceFeed: buildPriceFeed("10000", -2, 2000),
+                });
+                mockForUpdate(stargateClient, { price: "0", expo: -2, publish_time: 1000 });
+
+                await client.initialize();
+                await client.updatePrice();
+
+                expect(stargateClient.execute).toHaveBeenCalledTimes(1);
+            });
+        });
+
         it("throws when Hermes returns no binary data", async () => {
             const { client, fetch } = setup();
             await client.initialize();
@@ -337,6 +467,27 @@ describe(HermesClient.name, () => {
 
             await expect(client.updatePrice()).rejects.toThrow("Failed to update price");
         });
+
+        function mockForUpdate(stargateClient: ReturnType<typeof setup>["stargateClient"], currentPrice: { price: string; expo: number; publish_time: number }) {
+            stargateClient.queryContractSmart
+                .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
+                .mockResolvedValueOnce({ price: currentPrice.price, conf: "10", expo: currentPrice.expo, publish_time: currentPrice.publish_time })
+                .mockResolvedValueOnce({ update_fee: "1", wormhole_contract: "akash1wormhole" });
+            stargateClient.execute.mockResolvedValueOnce({
+                transactionHash: "TX_DEV",
+                gasUsed: 500000n,
+                gasWanted: 600000n,
+                height: 100,
+                events: [],
+                logs: [],
+            });
+        }
+
+        function mockForSkip(stargateClient: ReturnType<typeof setup>["stargateClient"], currentPrice: { price: string; expo: number; publish_time: number }) {
+            stargateClient.queryContractSmart
+                .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
+                .mockResolvedValueOnce({ price: currentPrice.price, conf: "10", expo: currentPrice.expo, publish_time: currentPrice.publish_time });
+        }
     });
 
     describe("queryCurrentPrice()", () => {
@@ -553,6 +704,19 @@ describe(HermesClient.name, () => {
             const start = client.start.bind(client);
             const abortController = new AbortController();
 
+            stargateClient.queryContractSmart
+                .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
+                .mockResolvedValueOnce({ price: "12345", conf: "10", expo: -8, publish_time: 1234567880 })
+                .mockResolvedValueOnce({ update_fee: "1", wormhole_contract: "akash1wormhole" });
+            stargateClient.execute.mockResolvedValueOnce({
+                transactionHash: "TX_CONCURRENT",
+                gasUsed: 500000n,
+                gasWanted: 600000n,
+                height: 100,
+                events: [],
+                logs: [],
+            });
+
             await Promise.all([
                 start({ signal: abortController.signal }),
                 start({ signal: abortController.signal }),
@@ -723,7 +887,19 @@ function setup(input?: Partial<HermesConfig> & {
         updateIntervalMs: input?.updateIntervalMs ?? 300_000,
         hermesEndpoint: input?.hermesEndpoint ?? "https://hermes.pyth.network",
         unsafeAllowInsecureEndpoints: input?.unsafeAllowInsecureEndpoints,
+        priceDeviationTolerance: input?.priceDeviationTolerance ?? { type: "absolute", value: 0 },
     });
 
     return { client, fetch, logger, stargateClient };
+}
+
+function buildPriceFeed(price: string, expo: number, publishTime: number): HermesResponse {
+    return {
+        parsed: [{
+            id: "test-id",
+            price: { price, conf: "10", expo, publish_time: publishTime },
+            ema_price: { price, conf: "10", expo, publish_time: publishTime },
+        }],
+        binary: { data: [btoa("vaa-data")] },
+    };
 }

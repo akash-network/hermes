@@ -1,14 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseConfig } from "./command-config.ts";
 
-function validEnv(overrides: Record<string, string | undefined> = {}) {
-    return {
-        CONTRACT_ADDRESS: "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
-        WALLET_SECRET: "mnemonic:abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        ...overrides,
-    };
-}
-
 describe("parseConfig", () => {
     it("returns error when CONTRACT_ADDRESS is missing", () => {
         const result = parseConfig({
@@ -127,4 +119,79 @@ describe("parseConfig", () => {
         expect(result.ok).toBe(true);
         expect((result as Extract<typeof result, { ok: true }>).value.unsafeAllowInsecureEndpoints).toBe(true);
     });
+
+    it("parses PRICE_DEVIATION_TOLERANCE as percentage when value ends with %", () => {
+        const result = parseConfig(validEnv({ PRICE_DEVIATION_TOLERANCE: "5%" }));
+
+        expect(result.ok).toBe(true);
+        expect((result as Extract<typeof result, { ok: true }>).value.priceDeviationTolerance).toEqual({
+            type: "percentage",
+            value: 5,
+        });
+    });
+
+    it("parses PRICE_DEVIATION_TOLERANCE as absolute when value has no suffix", () => {
+        const result = parseConfig(validEnv({ PRICE_DEVIATION_TOLERANCE: "0.5" }));
+
+        expect(result.ok).toBe(true);
+        expect((result as Extract<typeof result, { ok: true }>).value.priceDeviationTolerance).toEqual({
+            type: "absolute",
+            value: 0.5,
+        });
+    });
+
+    it("parses PRICE_DEVIATION_TOLERANCE as absolute integer", () => {
+        const result = parseConfig(validEnv({ PRICE_DEVIATION_TOLERANCE: "3" }));
+
+        expect(result.ok).toBe(true);
+        expect((result as Extract<typeof result, { ok: true }>).value.priceDeviationTolerance).toEqual({
+            type: "absolute",
+            value: 3,
+        });
+    });
+
+    it("leaves priceDeviationTolerance undefined when PRICE_DEVIATION_TOLERANCE is not provided", () => {
+        const result = parseConfig(validEnv());
+
+        expect(result.ok).toBe(true);
+        expect((result as Extract<typeof result, { ok: true }>).value.priceDeviationTolerance).toBeUndefined();
+    });
+
+    it("returns error when PRICE_DEVIATION_TOLERANCE has invalid format", () => {
+        const result = parseConfig(validEnv({ PRICE_DEVIATION_TOLERANCE: "abc" }));
+
+        expect(result.ok).toBe(false);
+        expect((result as Extract<typeof result, { ok: false }>).error).toContain("PRICE_DEVIATION_TOLERANCE");
+    });
+
+    it("returns error when PRICE_DEVIATION_TOLERANCE percentage exceeds 100", () => {
+        const result = parseConfig(validEnv({ PRICE_DEVIATION_TOLERANCE: "101%" }));
+
+        expect(result.ok).toBe(false);
+    });
+
+    it("parses PRICE_DEVIATION_TOLERANCE with decimal percentage", () => {
+        const result = parseConfig(validEnv({ PRICE_DEVIATION_TOLERANCE: "2.5%" }));
+
+        expect(result.ok).toBe(true);
+        expect((result as Extract<typeof result, { ok: true }>).value.priceDeviationTolerance).toEqual({
+            type: "percentage",
+            value: 2.5,
+        });
+    });
+
+    it("returns error when PRICE_DEVIATION_TOLERANCE is negative absolute value", () => {
+        const result = parseConfig(validEnv({ PRICE_DEVIATION_TOLERANCE: "-10" }));
+
+        expect(result.ok).toBe(false);
+        expect((result as Extract<typeof result, { ok: false }>).error).toContain("PRICE_DEVIATION_TOLERANCE");
+    });
+
+    function validEnv(overrides: Record<string, string | undefined> = {}) {
+        return {
+            CONTRACT_ADDRESS: "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
+            WALLET_SECRET: "mnemonic:abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+            ...overrides,
+        };
+    }
 });
