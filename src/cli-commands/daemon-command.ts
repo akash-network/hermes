@@ -1,6 +1,7 @@
 import http from "node:http";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
+import { prometheusExporter } from "../instrumentation/prometheus-exporter.ts";
 import type { CommandConfig } from "./command-config.ts";
 
 export async function daemonCommand(config: CommandConfig): Promise<void> {
@@ -12,6 +13,8 @@ export async function daemonCommand(config: CommandConfig): Promise<void> {
             const status = client.getStatus();
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(status));
+        } else if (req.method === "GET" && req.url === "/metrics") {
+            prometheusExporter.getMetricsRequestHandler(req, res);
         } else {
             res.writeHead(404, { "Content-Type": "text/plain" });
             res.end("Not Found");
