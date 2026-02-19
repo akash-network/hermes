@@ -174,6 +174,7 @@ akash query wasm contract-state smart $CONTRACT_ADDRESS '{"get_config":{}}'
 | `CONTRACT_ADDRESS` | Yes | - | Oracle contract address |
 | `WALLET_SECRET` | Yes | - | Either `privateKey:<private key in hex format>` or `mnemonic:<12/24 words>` |
 | `HERMES_ENDPOINT` | No | `https://hermes.pyth.network` | Pyth Hermes API |
+| `PRICE_DEVIATION_TOLERANCE` | No | 0 | absolute or percentage value for price deviations which should be ignored (e.g., `100` or `10%`) |
 | `UPDATE_INTERVAL_MS` | No | `300000` | Update interval (5 min) |
 | `GAS_PRICE` | No | `0.025uakt` | Gas price |
 | `DENOM` | No | `uakt` | Token denomination |

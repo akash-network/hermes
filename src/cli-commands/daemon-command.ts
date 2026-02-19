@@ -17,11 +17,20 @@ export async function daemonCommand(config: CommandConfig): Promise<void> {
             res.end("Not Found");
         }
     });
-    config.signal.addEventListener("abort", () => {
+    const abort = () => {
         config.logger?.log("\n\nShutting down daemon...");
         config.logger?.log("\nStopping health check server...");
-        server.close(() => config.logger?.log("Health check server stopped"));
-    }, { once: true });
+        return new Promise<void>((resolve) => {
+            server.close((err) => {
+                if (err) {
+                    config.logger?.log(`Error stopping health check server: ${err.message}`);
+                }
+                resolve();
+                config.logger?.log("Health check server stopped");
+            });
+        });
+    };
+    config.signal.addEventListener("abort", abort, { once: true });
     await client.start({ signal: config.signal });
     await new Promise<void>((resolve, reject) => {
         if (config.signal.aborted) return resolve();
@@ -29,11 +38,13 @@ export async function daemonCommand(config: CommandConfig): Promise<void> {
         server.listen(config.healthcheckPort, () => {
             resolve();
             server.off("error", reject);
-            config.logger?.log(`Health check endpoint available at http://localhost:${(server.address() as AddressInfo).port}/health`);
+            if (!config.signal.aborted) {
+                config.logger?.log(`Health check endpoint available at http://localhost:${(server.address() as AddressInfo).port}/health`);
+            }
         });
     });
     if (config.signal.aborted && server.listening) {
-        await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+        await abort();
     } else if (server.listening) {
         config.logger?.log("Daemon started. Press Ctrl+C to stop.\n");
         await once(server, "close");

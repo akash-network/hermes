@@ -47,6 +47,18 @@ export interface HermesConfig {
     denom?: string;
     gasPrice?: string;
     /**
+     * Optional threshold for skipping updates when the price change is below a tolerance.
+     *
+     * - For `type: "absolute"`, `value` is an absolute price difference in quote currency units
+     *   (e.g. `0.5` means $0.50 if the quote currency is USD).
+     * - For `type: "percentage"`, `value` is a number from 0 to 100
+     *   (e.g. `10` = 10%, `0.1` = 0.1%).
+     */
+    priceDeviationTolerance?: {
+        type: "absolute" | "percentage";
+        value: number;
+    };
+    /**
      * `fetch` implementation to use for HTTP requests. Defaults to globalThis.fetch.
      */
     fetch?: typeof globalThis.fetch;
@@ -166,6 +178,8 @@ interface OracleParamsResponse {
     last_updated_height: number;        // u64
 }
 
+const DEFAULT_PRICE_DEVIATION_TOLERANCE: Required<HermesConfig>["priceDeviationTolerance"] = { type: "absolute", value: 0 };
+
 export class HermesClient {
     #cosmClient?: SigningCosmWasmClient;
     #wallet?: OfflineDirectSigner;
@@ -193,10 +207,11 @@ export class HermesClient {
         validateContractAddress(config.contractAddress);
 
         this.#config = {
-            denom: "uakt",
-            gasPrice: "0.025uakt",
-            unsafeAllowInsecureEndpoints,
             ...config,
+            denom: config.denom ?? "uakt",
+            gasPrice: config.gasPrice ?? "0.025uakt",
+            unsafeAllowInsecureEndpoints,
+            priceDeviationTolerance: config.priceDeviationTolerance ?? DEFAULT_PRICE_DEVIATION_TOLERANCE,
         };
         this.#fetch = config.fetch ?? globalThis.fetch;
         this.#logger = config.logger ?? console;
@@ -458,17 +473,10 @@ export class HermesClient {
         }
 
         try {
-            // Fetch latest price + VAA from Hermes
             const { priceData, vaa } = await this.#fetchPriceFromHermes();
-
-            // Get current price from contract (for staleness check)
             const currentPrice = await this.queryCurrentPrice();
 
-            // Check if update is needed (publish_time must be newer)
-            if (priceData.price.publish_time <= currentPrice.publish_time) {
-                this.#logger.log(
-                    `Price already up to date (publish_time: ${currentPrice.publish_time})`,
-                );
+            if (this.#canIgnorePriceUpdate(priceData, currentPrice)) {
                 return;
             }
 
@@ -511,6 +519,48 @@ export class HermesClient {
             this.#logger.error(safeMessage);
             throw new Error(safeMessage);
         }
+    }
+
+    #canIgnorePriceUpdate(newPrice: PythPriceData, currentPrice: PriceResponse): boolean {
+        if (newPrice.price.publish_time <= currentPrice.publish_time) {
+            this.#logger.log(
+                `Price already up to date (publish_time: ${currentPrice.publish_time})`,
+            );
+            return true;
+        }
+
+        if (this.#isPriceDeviationAcceptable(newPrice, currentPrice)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    #isPriceDeviationAcceptable(newPrice: PythPriceData, currentPrice: PriceResponse): boolean {
+        const newPriceValue = parseFloat(newPrice.price.price) * Math.pow(10, newPrice.price.expo);
+        const currentPriceValue = parseFloat(currentPrice.price) * Math.pow(10, currentPrice.expo);
+        let isAcceptable = false;
+
+        this.#logger.log(`Checking if price deviation is acceptable: new=${newPriceValue}, current=${currentPriceValue}`);
+
+        if (this.#config.priceDeviationTolerance.type === "absolute") {
+            const deviation = Math.abs(newPriceValue - currentPriceValue);
+            isAcceptable = deviation <= this.#config.priceDeviationTolerance.value;
+
+            if (isAcceptable) {
+                this.#logger.log(`Price deviation ${deviation} within absolute tolerance ${this.#config.priceDeviationTolerance.value}, skipping update`);
+            }
+        } else if (this.#config.priceDeviationTolerance.type === "percentage") {
+            const deviationPercent = currentPriceValue === 0 ? Number.MAX_SAFE_INTEGER : Math.abs(newPriceValue - currentPriceValue) / currentPriceValue;
+            isAcceptable = deviationPercent <= this.#config.priceDeviationTolerance.value / 100;
+            if (isAcceptable) {
+                this.#logger.log(`Price deviation ${(deviationPercent * 100).toFixed(2)}% within percentage tolerance ${(this.#config.priceDeviationTolerance.value).toFixed(2)}%, skipping update`);
+            }
+        } else {
+            throw new Error(`Unknown price deviation tolerance type: ${this.#config.priceDeviationTolerance.type}`);
+        }
+
+        return isAcceptable;
     }
 
     /**
