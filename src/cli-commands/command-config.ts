@@ -1,11 +1,14 @@
 import { z } from "zod";
 import { HermesClient, type HermesConfig } from "../hermes-client.ts";
 import { validateContractAddress, validateWalletSecret } from "../validation.ts";
+import type { PriceProducerFactoryOptions } from "../types.ts";
+import { pollPriceStream } from "../price-stream/polling-price-stream.ts";
 
 export interface CommandConfig extends HermesConfig {
     createHermesClient: (config: HermesConfig) => Promise<HermesClient>;
     signal: AbortSignal;
     healthcheckPort: number;
+    rawConfig: z.infer<typeof configSchema>;
 }
 
 const configSchema = z.object({
@@ -38,11 +41,12 @@ const configSchema = z.object({
             });
         }
     }).optional(),
-    UPDATE_INTERVAL_MS: z.coerce.number().int().min(1000).positive().default(5 * 60 * 1000), // Default to 5 minutes
+    UPDATE_INTERVAL_MS: z.coerce.number().int().nonnegative().default(5 * 1000), // Default to 5 seconds
     HEALTHCHECK_PORT: z.coerce.number().int().min(1).max(65535).default(3000),
     GAS_PRICE: z.string().regex(/^(\d+)(\.\d+)?uakt$/, { message: 'GAS_PRICE must be a valid number with unit (e.g., "0.025uakt")' }).default("0.025uakt"),
     DENOM: z.string().default("uakt"),
     NODE_ENV: z.enum(["development", "production"]).optional(),
+    SMART_CONTRACT_CONFIG_CACHE_TTL_MS: z.coerce.number().int().min(1000).positive().default(60 * 60 * 1000),
 });
 
 type ParsedConfig = Omit<CommandConfig, "signal" | "logger">;
@@ -54,17 +58,26 @@ export function parseConfig(config: Record<string, string | undefined>): ParseCo
         return { ok: false, error: z.prettifyError(result.error) };
     }
 
+    const unsafeAllowInsecureEndpoints = result.data.NODE_ENV === "development"; // Enforce secure endpoints in production
     const parsedConfig: ParsedConfig = {
-        unsafeAllowInsecureEndpoints: result.data.NODE_ENV === "development", // Enforce secure endpoints in production
+        rawConfig: result.data,
+        unsafeAllowInsecureEndpoints,
         rpcEndpoint: result.data.RPC_ENDPOINT,
-        hermesEndpoint: result.data.HERMES_ENDPOINT,
         contractAddress: result.data.CONTRACT_ADDRESS,
         walletSecret: result.data.WALLET_SECRET,
-        updateIntervalMs: result.data.UPDATE_INTERVAL_MS,
         healthcheckPort: result.data.HEALTHCHECK_PORT,
         gasPrice: result.data.GAS_PRICE,
         denom: result.data.DENOM,
         priceDeviationTolerance: result.data.PRICE_DEVIATION_TOLERANCE,
+        smartContractConfigCacheTTLMs: result.data.SMART_CONTRACT_CONFIG_CACHE_TTL_MS,
+        priceProducerFactory(options: PriceProducerFactoryOptions) {
+            return pollPriceStream({
+                ...options,
+                unsafeAllowInsecureEndpoints,
+                baseUrl: result.data.HERMES_ENDPOINT,
+                pollingIntervalMs: result.data.UPDATE_INTERVAL_MS,
+            });
+        },
         createHermesClient: (cfg: HermesConfig) => HermesClient.connect(cfg),
     };
 

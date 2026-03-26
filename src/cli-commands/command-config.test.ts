@@ -64,32 +64,32 @@ describe("parseConfig", () => {
         expect((result as Extract<typeof result, { ok: true }>).value.rpcEndpoint).toBe("https://custom-rpc:443");
     });
 
-    it("passes HERMES_ENDPOINT to config", () => {
+    it("accepts HERMES_ENDPOINT and produces priceProducerFactory", () => {
         const result = parseConfig(validEnv({ HERMES_ENDPOINT: "https://hermes.example.com" }));
 
         expect(result.ok).toBe(true);
-        expect((result as Extract<typeof result, { ok: true }>).value.hermesEndpoint).toBe("https://hermes.example.com");
+        expect((result as Extract<typeof result, { ok: true }>).value.priceProducerFactory).toBeTypeOf("function");
     });
 
-    it("uses default hermesEndpoint when HERMES_ENDPOINT is not provided", () => {
+    it("uses default HERMES_ENDPOINT and produces priceProducerFactory", () => {
         const result = parseConfig(validEnv());
 
         expect(result.ok).toBe(true);
-        expect((result as Extract<typeof result, { ok: true }>).value.hermesEndpoint).toBe("https://hermes.pyth.network");
+        expect((result as Extract<typeof result, { ok: true }>).value.priceProducerFactory).toBeTypeOf("function");
     });
 
-    it("parses UPDATE_INTERVAL_MS as integer", () => {
+    it("accepts UPDATE_INTERVAL_MS and produces priceProducerFactory", () => {
         const result = parseConfig(validEnv({ UPDATE_INTERVAL_MS: "5000" }));
 
         expect(result.ok).toBe(true);
-        expect((result as Extract<typeof result, { ok: true }>).value.updateIntervalMs).toBe(5000);
+        expect((result as Extract<typeof result, { ok: true }>).value.priceProducerFactory).toBeTypeOf("function");
     });
 
-    it("uses default updateIntervalMs when UPDATE_INTERVAL_MS is not provided", () => {
+    it("uses default UPDATE_INTERVAL_MS and produces priceProducerFactory", () => {
         const result = parseConfig(validEnv());
 
         expect(result.ok).toBe(true);
-        expect((result as Extract<typeof result, { ok: true }>).value.updateIntervalMs).toBe(5 * 60 * 1000);
+        expect((result as Extract<typeof result, { ok: true }>).value.priceProducerFactory).toBeTypeOf("function");
     });
 
     it("returns error when UPDATE_INTERVAL_MS is not a valid integer", () => {

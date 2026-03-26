@@ -1,7 +1,8 @@
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mock } from "vitest-mock-extended";
-import { HermesClient, HermesConfig, HermesResponse } from "./hermes-client";
+import { HermesClient, HermesConfig } from "./hermes-client";
+import type { PriceUpdate, PriceProducerFactory, PriceProducerFactoryOptions } from "./types.ts";
 
 // ============================================================
 // SEC-01: Mnemonic must never appear in logs or error messages
@@ -47,16 +48,8 @@ describe("SEC-02: Endpoint URL validation in HermesClient", () => {
         })).toThrow("private or internal addresses are not allowed");
     });
 
-    it("rejects SSRF-targeted Hermes endpoints (metadata service)", () => {
-        expect(() => setup({
-            hermesEndpoint: "https://169.254.169.254/metadata",
-        })).toThrow("private or internal addresses are not allowed");
-    });
-
     it("accepts valid HTTPS endpoints", () => {
-        const { client } = setup({
-            hermesEndpoint: "https://hermes.pyth.network",
-        });
+        const { client } = setup();
         expect(client).toBeDefined();
     });
 });
@@ -66,10 +59,10 @@ describe("SEC-02: Endpoint URL validation in HermesClient", () => {
 // ============================================================
 describe("SEC-04: Error message information leakage", () => {
     it("updatePrice errors do not leak internal paths or stack traces", async () => {
-        const { client } = setup();
+        const { client, priceUpdate } = setup();
 
         // Without initializing, calling updatePrice should fail gracefully
-        const result = await client.updatePrice().catch(error => ({ error }));
+        const result = await client.updatePrice(priceUpdate).catch(error => ({ error }));
 
         expect(result).toHaveProperty("error");
         const { error } = result as { error: Error };
@@ -118,25 +111,17 @@ describe("SEC-05: Admin input validation", () => {
 // SEC-08: Config/status must not expose sensitive data
 // ============================================================
 describe("SEC-08: Sensitive data in config exposure", () => {
-    it("getStatus must not include mnemonic, gasPrice, or internal config", () => {
+    it("getStatus must not include mnemonic, gasPrice, or internal config", async () => {
         const { client } = setup();
 
-        const status = client.getStatus();
-
-        expect(status).toEqual({
-            isRunning: false,
-            contractAddress: "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
-            priceFeedId: undefined,
-            address: undefined,
-        });
-        expect(JSON.stringify(status)).not.toContain("abandon");
+        await expect(client.getStatus()).rejects.toThrow("Client not initialized");
     });
 
     it("getStatus must not include config object or mnemonic when initialized", async () => {
         const { client } = setup();
 
         await client.initialize();
-        const status = client.getStatus();
+        const status = await client.getStatus();
 
         expect(status).toEqual({
             isRunning: false,
@@ -202,7 +187,7 @@ describe(HermesClient.name, () => {
                 "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
                 { get_config: {} },
             );
-            const status = client.getStatus();
+            const status = await client.getStatus();
             expect(status.priceFeedId).toBe("test-feed-id");
             expect(status.address).toMatch(/^akash1[0-9a-z]{38}$/);
         });
@@ -218,7 +203,7 @@ describe(HermesClient.name, () => {
                 "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
                 { get_config: {} },
             );
-            const status = client.getStatus();
+            const status = await client.getStatus();
             expect(status.priceFeedId).toBe("test-feed-id");
             expect(status.address).toMatch(/^akash1[0-9a-z]{38}$/);
         });
@@ -238,17 +223,16 @@ describe(HermesClient.name, () => {
 
     describe("updatePrice()", () => {
         it("throws when client is not initialized", async () => {
-            const { client } = setup();
-            await expect(client.updatePrice()).rejects.toThrow("Client not initialized");
+            const { client, priceUpdate } = setup();
+            await expect(client.updatePrice(priceUpdate)).rejects.toThrow("Client not initialized");
         });
 
-        it("fetches price from Hermes and submits VAA when price is stale", async () => {
-            const { client, fetch, stargateClient } = setup();
+        it("submits VAA when price is stale", async () => {
+            const { client, priceUpdate, stargateClient } = setup();
 
             stargateClient.queryContractSmart
-                .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
-                .mockResolvedValueOnce({ price: "12345", conf: "10", expo: -8, publish_time: 1234567880 })
-                .mockResolvedValueOnce({ update_fee: "1", wormhole_contract: "akash1wormhole" });
+                .mockResolvedValueOnce({ price_feed_id: "test-feed-id", update_fee: "1", wormhole_contract: "akash1wormhole", admin: "akash1admin", default_denom: "uakt", default_base_denom: "akt", data_sources: [] })
+                .mockResolvedValueOnce({ price: "12345", conf: "10", expo: -8, publish_time: 1234567880 });
             stargateClient.execute.mockResolvedValueOnce({
                 transactionHash: "ABCD1234",
                 gasUsed: 500000n,
@@ -259,9 +243,8 @@ describe(HermesClient.name, () => {
             });
 
             await client.initialize();
-            await client.updatePrice();
+            await client.updatePrice(priceUpdate);
 
-            expect(fetch).toHaveBeenCalledTimes(1);
             expect(stargateClient.execute).toHaveBeenCalledWith(
                 expect.stringMatching(/^akash1/),
                 "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
@@ -273,14 +256,14 @@ describe(HermesClient.name, () => {
         });
 
         it("skips update when price is already up to date", async () => {
-            const { client, stargateClient, logger } = setup();
+            const { client, priceUpdate, stargateClient, logger } = setup();
 
             stargateClient.queryContractSmart
                 .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
                 .mockResolvedValueOnce({ publish_time: 1234567890 });
 
             await client.initialize();
-            await client.updatePrice();
+            await client.updatePrice(priceUpdate);
 
             expect(stargateClient.execute).not.toHaveBeenCalled();
             expect(logger.log).toHaveBeenCalledWith(
@@ -289,49 +272,28 @@ describe(HermesClient.name, () => {
         });
 
         it("skips update when contract has newer publish_time", async () => {
-            const { client, stargateClient } = setup();
+            const { client, priceUpdate, stargateClient } = setup();
 
             stargateClient.queryContractSmart
                 .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
                 .mockResolvedValueOnce({ publish_time: 9999999999 });
 
             await client.initialize();
-            await client.updatePrice();
+            await client.updatePrice(priceUpdate);
 
             expect(stargateClient.execute).not.toHaveBeenCalled();
         });
 
-        it("wraps Hermes HTTP errors with sanitized message", async () => {
-            const { client, fetch } = setup();
-            await client.initialize();
-
-            fetch.mockResolvedValueOnce(new Response("", { status: 500 }));
-
-            await expect(client.updatePrice()).rejects.toThrow("Failed to update price");
-        });
-
-        it("throws when Hermes returns no parsed data", async () => {
-            const { client, fetch } = setup();
-            await client.initialize();
-
-            fetch.mockResolvedValueOnce(new Response(JSON.stringify({
-                parsed: [],
-                binary: { data: ["abc"] },
-            })));
-
-            await expect(client.updatePrice()).rejects.toThrow("Failed to update price");
-        });
-
         describe("priceDeviationTolerance", () => {
             it("skips update when absolute deviation is within tolerance", async () => {
-                const { client, stargateClient, logger } = setup({
+                const { client, priceUpdate, stargateClient, logger } = setup({
                     priceDeviationTolerance: { type: "absolute", value: 1.0 },
                     priceFeed: buildPriceFeed("10000", -2, 2000),
                 });
                 mockForSkip(stargateClient, { price: "10050", expo: -2, publish_time: 1000 });
 
                 await client.initialize();
-                await client.updatePrice();
+                await client.updatePrice(priceUpdate);
 
                 expect(stargateClient.execute).not.toHaveBeenCalled();
                 expect(logger.log).toHaveBeenCalledWith(
@@ -340,27 +302,27 @@ describe(HermesClient.name, () => {
             });
 
             it("updates when absolute deviation exceeds tolerance", async () => {
-                const { client, stargateClient } = setup({
+                const { client, priceUpdate, stargateClient } = setup({
                     priceDeviationTolerance: { type: "absolute", value: 1.0 },
                     priceFeed: buildPriceFeed("10000", -2, 2000),
                 });
                 mockForUpdate(stargateClient, { price: "10200", expo: -2, publish_time: 1000 });
 
                 await client.initialize();
-                await client.updatePrice();
+                await client.updatePrice(priceUpdate);
 
                 expect(stargateClient.execute).toHaveBeenCalledTimes(1);
             });
 
             it("skips update when absolute deviation equals tolerance exactly", async () => {
-                const { client, stargateClient, logger } = setup({
+                const { client, priceUpdate, stargateClient, logger } = setup({
                     priceDeviationTolerance: { type: "absolute", value: 1.0 },
                     priceFeed: buildPriceFeed("10000", -2, 2000),
                 });
                 mockForSkip(stargateClient, { price: "10100", expo: -2, publish_time: 1000 });
 
                 await client.initialize();
-                await client.updatePrice();
+                await client.updatePrice(priceUpdate);
 
                 expect(stargateClient.execute).not.toHaveBeenCalled();
                 expect(logger.log).toHaveBeenCalledWith(
@@ -369,14 +331,14 @@ describe(HermesClient.name, () => {
             });
 
             it("skips update when percentage deviation is within tolerance", async () => {
-                const { client, stargateClient, logger } = setup({
+                const { client, priceUpdate, stargateClient, logger } = setup({
                     priceDeviationTolerance: { type: "percentage", value: 1 },
                     priceFeed: buildPriceFeed("10000", -2, 2000),
                 });
                 mockForSkip(stargateClient, { price: "10050", expo: -2, publish_time: 1000 });
 
                 await client.initialize();
-                await client.updatePrice();
+                await client.updatePrice(priceUpdate);
 
                 expect(stargateClient.execute).not.toHaveBeenCalled();
                 expect(logger.log).toHaveBeenCalledWith(
@@ -385,27 +347,27 @@ describe(HermesClient.name, () => {
             });
 
             it("updates when percentage deviation exceeds tolerance", async () => {
-                const { client, stargateClient } = setup({
+                const { client, priceUpdate, stargateClient } = setup({
                     priceDeviationTolerance: { type: "percentage", value: 1 },
                     priceFeed: buildPriceFeed("10000", -2, 2000),
                 });
                 mockForUpdate(stargateClient, { price: "10500", expo: -2, publish_time: 1000 });
 
                 await client.initialize();
-                await client.updatePrice();
+                await client.updatePrice(priceUpdate);
 
                 expect(stargateClient.execute).toHaveBeenCalledTimes(1);
             });
 
             it("skips update when percentage deviation equals tolerance exactly", async () => {
-                const { client, stargateClient, logger } = setup({
+                const { client, priceUpdate, stargateClient, logger } = setup({
                     priceDeviationTolerance: { type: "percentage", value: 1 },
                     priceFeed: buildPriceFeed("10100", -2, 2000),
                 });
                 mockForSkip(stargateClient, { price: "10000", expo: -2, publish_time: 1000 });
 
                 await client.initialize();
-                await client.updatePrice();
+                await client.updatePrice(priceUpdate);
 
                 expect(stargateClient.execute).not.toHaveBeenCalled();
                 expect(logger.log).toHaveBeenCalledWith(
@@ -414,65 +376,48 @@ describe(HermesClient.name, () => {
             });
 
             it("updates on any price difference with default tolerance (absolute 0)", async () => {
-                const { client, stargateClient } = setup({
+                const { client, priceUpdate, stargateClient } = setup({
                     priceFeed: buildPriceFeed("10001", -2, 2000),
                 });
                 mockForUpdate(stargateClient, { price: "10000", expo: -2, publish_time: 1000 });
 
                 await client.initialize();
-                await client.updatePrice();
+                await client.updatePrice(priceUpdate);
 
                 expect(stargateClient.execute).toHaveBeenCalledTimes(1);
             });
 
             it("handles different exponents between new and current price", async () => {
-                const { client, stargateClient } = setup({
+                const { client, priceUpdate, stargateClient } = setup({
                     priceDeviationTolerance: { type: "absolute", value: 1.0 },
                     priceFeed: buildPriceFeed("1000000", -4, 2000),
                 });
                 mockForUpdate(stargateClient, { price: "10200", expo: -2, publish_time: 1000 });
 
                 await client.initialize();
-                await client.updatePrice();
+                await client.updatePrice(priceUpdate);
 
                 expect(stargateClient.execute).toHaveBeenCalledTimes(1);
             });
 
             it("handles zero current price when calculating percentage deviation", async () => {
-                const { client, stargateClient } = setup({
+                const { client, priceUpdate, stargateClient } = setup({
                     priceDeviationTolerance: { type: "percentage", value: 10 },
                     priceFeed: buildPriceFeed("10000", -2, 2000),
                 });
                 mockForUpdate(stargateClient, { price: "0", expo: -2, publish_time: 1000 });
 
                 await client.initialize();
-                await client.updatePrice();
+                await client.updatePrice(priceUpdate);
 
                 expect(stargateClient.execute).toHaveBeenCalledTimes(1);
             });
         });
 
-        it("throws when Hermes returns no binary data", async () => {
-            const { client, fetch } = setup();
-            await client.initialize();
-
-            fetch.mockResolvedValueOnce(new Response(JSON.stringify({
-                parsed: [{
-                    id: "test",
-                    price: { price: "100", conf: "1", expo: -8, publish_time: 123 },
-                    ema_price: { price: "100", conf: "1", expo: -8, publish_time: 123 },
-                }],
-                binary: { data: [] },
-            })));
-
-            await expect(client.updatePrice()).rejects.toThrow("Failed to update price");
-        });
-
         function mockForUpdate(stargateClient: ReturnType<typeof setup>["stargateClient"], currentPrice: { price: string; expo: number; publish_time: number }) {
             stargateClient.queryContractSmart
-                .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
-                .mockResolvedValueOnce({ price: currentPrice.price, conf: "10", expo: currentPrice.expo, publish_time: currentPrice.publish_time })
-                .mockResolvedValueOnce({ update_fee: "1", wormhole_contract: "akash1wormhole" });
+                .mockResolvedValueOnce({ price_feed_id: "test-feed-id", update_fee: "1", wormhole_contract: "akash1wormhole", admin: "akash1admin", default_denom: "uakt", default_base_denom: "akt", data_sources: [] })
+                .mockResolvedValueOnce({ price: currentPrice.price, conf: "10", expo: currentPrice.expo, publish_time: currentPrice.publish_time });
             stargateClient.execute.mockResolvedValueOnce({
                 transactionHash: "TX_DEV",
                 gasUsed: 500000n,
@@ -549,7 +494,7 @@ describe(HermesClient.name, () => {
 
     describe("queryConfig()", () => {
         it("queries contract for config", async () => {
-            const { client, stargateClient } = setup();
+            const { client, stargateClient } = setup({ smartContractConfigCacheTTLMs: -1 });
             const expectedConfig = {
                 admin: "akash1admin",
                 wormhole_contract: "akash1wormhole",
@@ -561,7 +506,7 @@ describe(HermesClient.name, () => {
             };
 
             stargateClient.queryContractSmart
-                .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
+                .mockResolvedValueOnce({ price_feed_id: "test-feed-id", update_fee: "1", wormhole_contract: "akash1wormhole", admin: "akash1admin", default_denom: "uakt", default_base_denom: "akt", data_sources: [] })
                 .mockResolvedValueOnce(expectedConfig);
 
             await client.initialize();
@@ -700,14 +645,15 @@ describe(HermesClient.name, () => {
         });
 
         it("starts once if called concurrently", async () => {
-            const { client, stargateClient, fetch } = setup();
+            const priceUpdate = buildPriceFeed("123.45", -8, 1234567890);
+            const factory = blockingFactory(priceUpdate);
+            const { client, stargateClient } = setup({ priceProducerFactory: factory });
             const start = client.start.bind(client);
             const abortController = new AbortController();
 
             stargateClient.queryContractSmart
-                .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
-                .mockResolvedValueOnce({ price: "12345", conf: "10", expo: -8, publish_time: 1234567880 })
-                .mockResolvedValueOnce({ update_fee: "1", wormhole_contract: "akash1wormhole" });
+                .mockResolvedValueOnce({ price_feed_id: "test-feed-id", update_fee: "1", wormhole_contract: "akash1wormhole", admin: "akash1admin", default_denom: "uakt", default_base_denom: "akt", data_sources: [] })
+                .mockResolvedValueOnce({ price: "12345", conf: "10", expo: -8, publish_time: 1234567880 });
             stargateClient.execute.mockResolvedValueOnce({
                 transactionHash: "TX_CONCURRENT",
                 gasUsed: 500000n,
@@ -717,33 +663,43 @@ describe(HermesClient.name, () => {
                 logs: [],
             });
 
-            await Promise.all([
+            const allPromise = Promise.all([
                 start({ signal: abortController.signal }),
                 start({ signal: abortController.signal }),
                 start({ signal: abortController.signal }),
                 start({ signal: abortController.signal }),
-            ]).finally(() => abortController.abort());
+            ]);
 
-            expect(stargateClient.execute).toHaveBeenCalledTimes(1);
-            expect(fetch).toHaveBeenCalledTimes(1);
+            await vi.waitFor(() => {
+                expect(stargateClient.execute).toHaveBeenCalledTimes(1);
+            });
+
+            abortController.abort();
+            await allPromise;
+
+            expect(factory).toHaveBeenCalledTimes(1);
         });
 
         it("logs and returns when already running", async () => {
-            const { client, logger, stargateClient } = setup();
+            const priceUpdate = buildPriceFeed("123.45", -8, 1234567890);
+            const factory = blockingFactory(priceUpdate);
+            const { client, logger, stargateClient } = setup({ priceProducerFactory: factory });
             const abortController = new AbortController();
 
             stargateClient.queryContractSmart
                 .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
                 .mockResolvedValueOnce({ publish_time: 1234567890 });
 
-            try {
-                await client.start({ signal: abortController.signal });
-                await client.start({ signal: abortController.signal });
-            } finally {
-                abortController.abort();
-            }
+            const startPromise = client.start({ signal: abortController.signal });
+            await vi.waitFor(async () => {
+                expect((await client.getStatus()).isRunning).toBe(true);
+            });
+            await client.start({ signal: abortController.signal });
 
             expect(logger.log).toHaveBeenCalledWith("Hermes client is already running");
+
+            abortController.abort();
+            await startPromise;
         });
 
         it("initializes client when not already initialized", async () => {
@@ -754,15 +710,14 @@ describe(HermesClient.name, () => {
                 .mockResolvedValueOnce({ publish_time: 1234567890 });
 
             const abortController = new AbortController();
-            try {
-                await client.start({ signal: abortController.signal });
-                const status = client.getStatus();
-                expect(status.isRunning).toBe(true);
-                expect(status.priceFeedId).toBe("test-feed-id");
-                expect(status.address).toMatch(/^akash1/);
-            } finally {
-                abortController.abort();
-            }
+            await client.start({ signal: abortController.signal });
+
+            const status = await client.getStatus();
+            expect(status.isRunning).toBe(true);
+            expect(status.priceFeedId).toBe("test-feed-id");
+            expect(status.address).toMatch(/^akash1/);
+
+            abortController.abort();
         });
 
         it("skips initialization when already initialized", async () => {
@@ -773,49 +728,55 @@ describe(HermesClient.name, () => {
                 .mockResolvedValueOnce({ publish_time: 1234567890 });
 
             await client.initialize();
-            await callAndAbort(client.start.bind(client));
+            const abortController = new AbortController();
+            await client.start({ signal: abortController.signal });
+            abortController.abort();
 
             expect(stargateClient.queryContractSmart).toHaveBeenCalledTimes(2);
         });
 
         it("stops when abort signal fires", async () => {
-            const { client, stargateClient, logger } = setup();
+            const priceUpdate = buildPriceFeed("123.45", -8, 1234567890);
+            const factory = blockingFactory(priceUpdate);
+            const { client, stargateClient, logger } = setup({ priceProducerFactory: factory });
             const ac = new AbortController();
 
             stargateClient.queryContractSmart
                 .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
                 .mockResolvedValueOnce({ publish_time: 1234567890 });
 
-            await client.start({ signal: ac.signal });
-            expect(client.getStatus().isRunning).toBe(true);
+            const startPromise = client.start({ signal: ac.signal });
+            await vi.waitFor(async () => {
+                expect((await client.getStatus()).isRunning).toBe(true);
+            });
 
             ac.abort();
-            expect(client.getStatus().isRunning).toBe(false);
+            await startPromise;
+
+            expect((await client.getStatus()).isRunning).toBe(false);
             expect(logger.log).toHaveBeenCalledWith("Hermes client stopped");
         });
 
         it("continues running when updatePrice throws", async () => {
-            const { client, stargateClient, fetch, logger } = setup();
-
-            stargateClient.queryContractSmart
-                .mockResolvedValueOnce({ price_feed_id: "test-feed-id" });
-            fetch.mockResolvedValueOnce(new Response("", { status: 500 }));
+            const { client, stargateClient, logger } = setup();
             const abortController = new AbortController();
 
-            try {
-                await client.start({ signal: abortController.signal });
+            stargateClient.queryContractSmart
+                .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
+                .mockRejectedValueOnce(new Error("query failed"));
 
-                expect(client.getStatus().isRunning).toBe(true);
-                expect(logger.error).toHaveBeenCalledWith(
-                    "Error in scheduled update:",
-                    expect.any(Error),
-                );
-            } finally {
-                abortController.abort();
-            }
+            await client.start({ signal: abortController.signal });
+
+            expect((await client.getStatus()).isRunning).toBe(true);
+            expect(logger.error).toHaveBeenCalledWith(
+                "Error in scheduled update:",
+                expect.any(Error),
+            );
+
+            abortController.abort();
         });
 
-        it("sets isRunning to false when initialization fails", async () => {
+        it("rejects when initialization fails", async () => {
             const { client, stargateClient } = setup();
 
             stargateClient.queryContractSmart.mockRejectedValueOnce(
@@ -825,55 +786,60 @@ describe(HermesClient.name, () => {
             const ac = new AbortController();
             try {
                 await expect(client.start({ signal: ac.signal })).rejects.toThrow("Failed to start Hermes client");
-                expect(client.getStatus().isRunning).toBe(false);
             } finally {
                 ac.abort();
             }
         });
 
-        it("schedules periodic updates after initial update", async () => {
-            vi.useFakeTimers();
-            const { client, stargateClient, fetch } = setup({
-                updateIntervalMs: 10_000,
+        it("processes multiple price updates from stream", async () => {
+            const priceUpdate1 = buildPriceFeed("10000", -2, 2000);
+            const priceUpdate2 = buildPriceFeed("10100", -2, 3000);
+            const factory = vi.fn(async function* () {
+                yield priceUpdate1;
+                yield priceUpdate2;
             });
+            const { client, stargateClient } = setup({ priceProducerFactory: factory as unknown as PriceProducerFactory });
 
             stargateClient.queryContractSmart
-                .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
-                .mockResolvedValueOnce({ publish_time: 1234567890 })
-                .mockResolvedValueOnce({ publish_time: 1234567890 });
+                .mockResolvedValueOnce({ price_feed_id: "test-feed-id", update_fee: "1", wormhole_contract: "akash1wormhole", admin: "akash1admin", default_denom: "uakt", default_base_denom: "akt", data_sources: [] })
+                .mockResolvedValueOnce({ price: "9000", conf: "10", expo: -2, publish_time: 1000 })
+                .mockResolvedValueOnce({ price: "10000", conf: "10", expo: -2, publish_time: 2000 });
+            stargateClient.execute.mockResolvedValue({
+                transactionHash: "TX",
+                gasUsed: 500000n,
+                gasWanted: 600000n,
+                height: 100,
+                events: [],
+                logs: [],
+            });
 
-            const abortController = new AbortController();
-            try {
-                await client.start({ signal: abortController.signal });
-                expect(fetch).toHaveBeenCalledTimes(1);
+            const ac = new AbortController();
+            await client.start({ signal: ac.signal });
+            ac.abort();
 
-                await vi.advanceTimersByTimeAsync(10000);
-                expect(fetch).toHaveBeenCalledTimes(2);
-            } finally {
-                abortController.abort();
-            }
+            expect(stargateClient.execute).toHaveBeenCalledTimes(2);
         });
-
-        function callAndAbort(fn: (input: { signal: AbortSignal }) => Promise<void>) {
-            const abortController = new AbortController();
-            return fn({ signal: abortController.signal }).finally(() => abortController.abort());
-        }
     });
 });
 
 function setup(input?: Partial<HermesConfig> & {
-    priceFeed?: HermesResponse;
+    priceFeed?: PriceUpdate;
 }) {
-    const fetch = vi.fn(async () => new Response(JSON.stringify(input?.priceFeed ?? {
-        parsed: [
-            { price: { price: "123.45", conf: "0.01", expo: -8, publish_time: 1234567890 }, ema_price: { price: "123.45", conf: "0.01", expo: -8, publish_time: 1234567890 }, id: "test-id" },
-        ],
-        binary: {
-            data: [btoa("some base 64 endcodable data")],
+    const priceUpdate: PriceUpdate = input?.priceFeed ?? {
+        priceData: {
+            id: "test-id",
+            price: { price: "123.45", conf: "0.01", expo: -8, publish_time: 1234567890 },
+            ema_price: { price: "123.45", conf: "0.01", expo: -8, publish_time: 1234567890 },
         },
-    } satisfies HermesResponse)));
+        vaa: btoa("some base 64 endcodable data"),
+    };
+
+    const priceProducerFactory = vi.fn(async function* () {
+        yield priceUpdate;
+    });
+
     const stargateClient = mock<SigningCosmWasmClient>({
-        queryContractSmart: vi.fn(async () => ({ price_feed_id: "test-feed-id" })),
+        queryContractSmart: vi.fn(async () => ({ price_feed_id: "test-feed-id", update_fee: "1", wormhole_contract: "akash1wormhole", admin: "akash1admin", default_denom: "uakt", default_base_denom: "akt", data_sources: [] })),
     });
     const logger = mock<Console>();
     const client = new HermesClient({
@@ -881,25 +847,35 @@ function setup(input?: Partial<HermesConfig> & {
         contractAddress: input?.contractAddress ?? "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
         walletSecret: input?.walletSecret ?? { type: "mnemonic", value: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" },
         gasPrice: input?.gasPrice ?? "0.025uakt",
-        fetch,
         connectWithSigner: async () => stargateClient,
         logger,
-        updateIntervalMs: input?.updateIntervalMs ?? 300_000,
-        hermesEndpoint: input?.hermesEndpoint ?? "https://hermes.pyth.network",
         unsafeAllowInsecureEndpoints: input?.unsafeAllowInsecureEndpoints,
         priceDeviationTolerance: input?.priceDeviationTolerance ?? { type: "absolute", value: 0 },
+        priceProducerFactory: (input?.priceProducerFactory ?? priceProducerFactory) as PriceProducerFactory,
+        smartContractConfigCacheTTLMs: input?.smartContractConfigCacheTTLMs ?? 60_000,
     });
 
-    return { client, fetch, logger, stargateClient };
+    return { client, priceUpdate, priceProducerFactory, logger, stargateClient };
 }
 
-function buildPriceFeed(price: string, expo: number, publishTime: number): HermesResponse {
+function buildPriceFeed(price: string, expo: number, publishTime: number): PriceUpdate {
     return {
-        parsed: [{
+        priceData: {
             id: "test-id",
             price: { price, conf: "10", expo, publish_time: publishTime },
             ema_price: { price, conf: "10", expo, publish_time: publishTime },
-        }],
-        binary: { data: [btoa("vaa-data")] },
+        },
+        vaa: btoa("vaa-data"),
     };
+}
+
+function blockingFactory(priceUpdate: PriceUpdate) {
+    return vi.fn(async function* ({ signal }: PriceProducerFactoryOptions) {
+        yield priceUpdate;
+        if (signal && !signal.aborted) {
+            await new Promise<void>(resolve => {
+                signal.addEventListener("abort", () => resolve(), { once: true });
+            });
+        }
+    });
 }

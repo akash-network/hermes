@@ -10,9 +10,16 @@ export async function daemonCommand(config: CommandConfig): Promise<void> {
     const client = await config.createHermesClient(config);
     const server = http.createServer((req, res) => {
         if (req.method === "GET" && req.url === "/health") {
-            const status = client.getStatus();
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(status));
+            client.getStatus()
+                .then((status) => {
+                    res.writeHead(200, { "Content-Type": "application/json" });
+                    res.end(JSON.stringify(status));
+                })
+                .catch((error) => {
+                    config.logger?.log(`Error fetching health status: ${error.message}`);
+                    res.writeHead(500, { "Content-Type": "application/json" });
+                    res.end();
+                });
         } else if (req.method === "GET" && req.url === "/metrics") {
             prometheusExporter.getMetricsRequestHandler(req, res);
         } else {
