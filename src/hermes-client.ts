@@ -411,7 +411,9 @@ export class HermesClient {
 
             const price = priceUpdate.priceData.price;
             this.#logger.log(`Price updated successfully! TX: ${result.transactionHash}`);
-            this.#logger.log(`  Gas used: ${result.gasUsed}`);
+            if (result.gasUsed !== undefined) {
+                this.#logger.log(`  Gas used: ${result.gasUsed}`);
+            }
             this.#logger.log(`  New price: ${price.price} (expo: ${price.expo})`);
             priceUpdateCounter.add(1, { result: "success" });
         } catch (error) {
