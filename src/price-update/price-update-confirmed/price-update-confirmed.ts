@@ -1,5 +1,5 @@
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
-import type { PriceUpdate, PriceUpdateOptions, PriceUpdater, UpdatePriceFeedMsg } from "../../types";
+import type { PriceUpdate, PriceUpdateOptions, PriceUpdater, UpdatePriceFeedMsg } from "../../types.ts";
 
 export class PriceUpdateConfirmed implements PriceUpdater {
     readonly #signingClient: SigningCosmWasmClient;
