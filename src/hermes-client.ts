@@ -14,17 +14,18 @@
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { DirectSecp256k1HdWallet, DirectSecp256k1Wallet, type OfflineDirectSigner } from "@cosmjs/proto-signing";
 import { GasPrice } from "@cosmjs/stargate";
+import { priceUpdateCounter } from "./metrics.ts";
+import { latestValue } from "./price-stream/latest-value/latest-value.ts";
+import { PriceUpdateConfirmed } from "./price-update/price-update-confirmed/price-update-confirmed.ts";
+import type { Logger, PriceProducerFactory, PriceUpdate, PriceUpdater, PythPriceData } from "./types.ts";
 import {
-    validateEndpointUrl,
+    sanitizeErrorMessage,
     validateAkashAddress,
     validateContractAddress,
+    validateEndpointUrl,
     validateFeeAmount,
-    sanitizeErrorMessage,
     validateWalletSecret,
 } from "./validation.ts";
-import { priceUpdateCounter } from "./metrics.ts";
-import type { PriceUpdate, PythPriceData, PriceProducerFactory, Logger } from "./types.ts";
-import { latestValue } from "./price-stream/latest-value/latest-value.ts";
 
 export interface HermesConfig {
     /**
@@ -80,17 +81,6 @@ export interface HermesConfig {
 // Contract Execute Messages
 // Matches pyth contract msg.rs
 // =====================
-
-interface UpdatePriceFeedMsg {
-    update_price_feed: {
-        // VAA data from Pyth Hermes API (base64 encoded Binary)
-        // The Pyth contract will:
-        // 1. Verify VAA via Wormhole contract
-        // 2. Parse Pyth price attestation from payload
-        // 3. Relay to x/oracle module
-        vaa: string;
-    };
-}
 
 interface UpdateFeeMsg {
     update_fee: {
@@ -176,6 +166,7 @@ export class HermesClient {
         await client.initialize();
         return client;
     }
+    #priceUpdater?: PriceUpdater;
 
     constructor(config: HermesConfig) {
         const unsafeAllowInsecureEndpoints = config.unsafeAllowInsecureEndpoints ?? false;
@@ -215,6 +206,7 @@ export class HermesClient {
                     gasPrice: GasPrice.fromString(this.#config.gasPrice),
                 },
             );
+
             this.#logger.log("Connected to chain successfully");
 
             this.#logger.log("Fetching smart contract configuration...");
@@ -397,43 +389,30 @@ export class HermesClient {
         const startTime = performance.now();
 
         try {
-            const { priceData, vaa } = priceUpdate;
             const currentPrice = await this.queryCurrentPrice();
 
-            if (this.#canIgnorePriceUpdate(priceData, currentPrice)) {
+            if (this.#canIgnorePriceUpdate(priceUpdate.priceData, currentPrice)) {
                 priceUpdateCounter.add(1, { result: "skipped" });
                 return;
             }
-
-            // Prepare execute message with VAA
-            // The contract will:
-            // 1. Verify VAA via Wormhole contract
-            // 2. Parse Pyth price attestation from VAA payload
-            // 3. Validate price feed ID matches expected
-            // 4. Relay validated price to x/oracle module
-            const msg: UpdatePriceFeedMsg = {
-                update_price_feed: {
-                    vaa: vaa,
-                },
-            };
 
             const config = await this.queryConfig();
 
             // Execute update
             this.#logger.log("Submitting VAA to Pyth contract...");
             this.#logger.log(`  Wormhole contract: ${config.wormhole_contract}`);
-            const result = await this.#getCosmClient().execute(
-                this.#senderAddress,
-                this.#config.contractAddress,
-                msg,
-                "auto",
-                undefined,
-                [{ denom: this.#config.denom, amount: config.update_fee }],
-            );
+            this.#priceUpdater ??= new PriceUpdateConfirmed(this.#getCosmClient());
+            const result = await this.#priceUpdater.updatePrice(priceUpdate, {
+                senderAddress: this.#senderAddress,
+                contractAddress: this.#config.contractAddress,
+                denom: this.#config.denom,
+                updateFee: config.update_fee,
+            });
 
+            const price = priceUpdate.priceData.price;
             this.#logger.log(`Price updated successfully! TX: ${result.transactionHash}`);
             this.#logger.log(`  Gas used: ${result.gasUsed}`);
-            this.#logger.log(`  New price: ${priceData.price.price} (expo: ${priceData.price.expo})`);
+            this.#logger.log(`  New price: ${price.price} (expo: ${price.expo})`);
             priceUpdateCounter.add(1, { result: "success" });
         } catch (error) {
             // SEC-04: Sanitize error messages to prevent information leakage
@@ -574,14 +553,5 @@ export class HermesClient {
 
 // Export types for external use
 export type {
-    DataSourceResponse,
-    UpdatePriceFeedMsg,
-    UpdateFeeMsg,
-    TransferAdminMsg,
-    RefreshOracleParamsMsg,
-    ConfigResponse,
-    PriceResponse,
-    PriceFeedResponse,
-    PriceFeedIdResponse,
-    OracleParamsResponse,
+    ConfigResponse, DataSourceResponse, OracleParamsResponse, PriceFeedIdResponse, PriceFeedResponse, PriceResponse, RefreshOracleParamsMsg, TransferAdminMsg, UpdateFeeMsg,
 };
