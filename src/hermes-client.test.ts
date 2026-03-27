@@ -706,18 +706,15 @@ describe(HermesClient.name, () => {
             const { client, stargateClient } = setup();
 
             stargateClient.queryContractSmart
-                .mockResolvedValueOnce({ price_feed_id: "test-feed-id" })
-                .mockResolvedValueOnce({ publish_time: 1234567890 });
+                .mockResolvedValueOnce({ price_feed_id: "test-feed-id" });
 
             const abortController = new AbortController();
             await client.start({ signal: abortController.signal });
+            abortController.abort();
 
             const status = await client.getStatus();
-            expect(status.isRunning).toBe(true);
             expect(status.priceFeedId).toBe("test-feed-id");
             expect(status.address).toMatch(/^akash1/);
-
-            abortController.abort();
         });
 
         it("skips initialization when already initialized", async () => {
@@ -766,14 +763,12 @@ describe(HermesClient.name, () => {
                 .mockRejectedValueOnce(new Error("query failed"));
 
             await client.start({ signal: abortController.signal });
+            abortController.abort();
 
-            expect((await client.getStatus()).isRunning).toBe(true);
             expect(logger.error).toHaveBeenCalledWith(
                 "Error in scheduled update:",
                 expect.any(Error),
             );
-
-            abortController.abort();
         });
 
         it("rejects when initialization fails", async () => {
@@ -791,7 +786,7 @@ describe(HermesClient.name, () => {
             }
         });
 
-        it("processes multiple price updates from stream", async () => {
+        it("processes latest price update from stream when updates arrive faster than consumption", async () => {
             const priceUpdate1 = buildPriceFeed("10000", -2, 2000);
             const priceUpdate2 = buildPriceFeed("10100", -2, 3000);
             const factory = vi.fn(async function* () {
@@ -802,8 +797,7 @@ describe(HermesClient.name, () => {
 
             stargateClient.queryContractSmart
                 .mockResolvedValueOnce({ price_feed_id: "test-feed-id", update_fee: "1", wormhole_contract: "akash1wormhole", admin: "akash1admin", default_denom: "uakt", default_base_denom: "akt", data_sources: [] })
-                .mockResolvedValueOnce({ price: "9000", conf: "10", expo: -2, publish_time: 1000 })
-                .mockResolvedValueOnce({ price: "10000", conf: "10", expo: -2, publish_time: 2000 });
+                .mockResolvedValueOnce({ price: "9000", conf: "10", expo: -2, publish_time: 1000 });
             stargateClient.execute.mockResolvedValue({
                 transactionHash: "TX",
                 gasUsed: 500000n,
@@ -817,7 +811,7 @@ describe(HermesClient.name, () => {
             await client.start({ signal: ac.signal });
             ac.abort();
 
-            expect(stargateClient.execute).toHaveBeenCalledTimes(2);
+            expect(stargateClient.execute).toHaveBeenCalledTimes(1);
         });
     });
 });

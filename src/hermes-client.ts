@@ -24,6 +24,7 @@ import {
 } from "./validation.ts";
 import { priceUpdateCounter } from "./metrics.ts";
 import type { PriceUpdate, PythPriceData, PriceProducerFactory, Logger } from "./types.ts";
+import { latestValue } from "./price-stream/latest-value/latest-value.ts";
 
 export interface HermesConfig {
     /**
@@ -279,7 +280,10 @@ export class HermesClient {
             this.#smartContractConfig.value = this.#getCosmClient().queryContractSmart(
                 this.#config.contractAddress,
                 { get_config: {} },
-            );
+            ).catch((error) => {
+                this.#smartContractConfig.value = undefined;
+                throw error;
+            });
             this.#smartContractConfig.expiresAt = Date.now() + this.#config.smartContractConfigCacheTTLMs;
         }
 
@@ -390,6 +394,8 @@ export class HermesClient {
             throw new Error("Client not initialized");
         }
 
+        const startTime = performance.now();
+
         try {
             const { priceData, vaa } = priceUpdate;
             const currentPrice = await this.queryCurrentPrice();
@@ -435,6 +441,8 @@ export class HermesClient {
             this.#logger.error(safeMessage);
             priceUpdateCounter.add(1, { result: "failure" });
             throw new Error(safeMessage);
+        } finally {
+            this.#logger.log(`Price updated in ${((performance.now() - startTime) / 1000).toFixed(2)} s`);
         }
     }
 
@@ -489,39 +497,53 @@ export class HermesClient {
             return;
         }
 
+        if (options?.signal?.aborted) return;
+
+        const controller = new AbortController();
+        const signal = options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+
         // important to be set before any async operation to prevent multiple concurrent starts
         this.#isRunning = true;
-        options?.signal?.addEventListener("abort", () => {
+        signal.addEventListener("abort", () => {
             this.#isRunning = false;
             this.#logger.log("Hermes client stopped");
         }, { once: true });
 
         try {
-            if (!this.#cosmClient) {
-                await this.initialize();
-            }
-
             this.#logger.log(
                 "Starting automatic price consumption",
             );
 
+            if (!this.#cosmClient) {
+                await this.initialize();
+            }
+
             const smartContractConfig = await this.queryConfig();
             const priceStream = this.#config.priceProducerFactory({
                 priceFeedId: smartContractConfig.price_feed_id,
-                signal: options?.signal,
+                signal,
                 logger: this.#logger,
             });
-
-            for await (const priceData of priceStream) {
-                if (!this.#isRunning) break;
-                try {
-                    await this.updatePrice(priceData);
-                } catch (error) {
-                    this.#logger.error("Error in scheduled update:", error);
+            const priceUpdates = latestValue<PriceUpdate>({ signal });
+            const consumePrices = async () => {
+                for await (const priceUpdate of priceStream) {
+                    priceUpdates.set(priceUpdate);
                 }
-            }
+                controller.abort();
+            };
+            const updatePrices = async () => {
+                for await (const priceUpdate of priceUpdates) {
+                    try {
+                        await this.updatePrice(priceUpdate);
+                    } catch (error) {
+                        this.#logger.error("Error in scheduled update:", error);
+                    }
+                }
+            };
+
+            await Promise.all([consumePrices(), updatePrices()]);
         } catch (error) {
-            this.#isRunning = false;
+            controller.abort();
             const safeMessage = sanitizeErrorMessage(error, "Failed to start Hermes client");
             this.#logger.error(safeMessage);
             throw new Error(safeMessage);

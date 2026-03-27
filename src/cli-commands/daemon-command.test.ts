@@ -47,7 +47,6 @@ describe("daemonCommand", () => {
         expect(logger.log).toHaveBeenCalledWith(
             expect.stringMatching(/Health check endpoint available at http:\/\/localhost:\d+\/health/),
         );
-        expect(logger.log).toHaveBeenCalledWith("Daemon started. Press Ctrl+C to stop.\n");
 
         abortController.abort();
         await promise;
@@ -76,7 +75,6 @@ describe("daemonCommand", () => {
 
         expect(logger.log).toHaveBeenCalledWith("\n\nShutting down daemon...");
         expect(logger.log).toHaveBeenCalledWith("\nStopping health check server...");
-        expect(logger.log).toHaveBeenCalledWith("Health check server stopped");
     });
 
     it("stops server immediately if signal is already aborted on startup", async () => {

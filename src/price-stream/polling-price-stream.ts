@@ -74,7 +74,6 @@ export async function *pollPriceStream(options: PollPriceStreamOptions): AsyncGe
         );
 
         yield { priceData, vaa };
-        options?.logger?.log(`Yielded price update for feed ${options.priceFeedId} in ${performance.now() - fetchStart} ms`);
         if (options.pollingIntervalMs > 0) {
             await delay(options.pollingIntervalMs, undefined, { signal: options.signal })
                 .catch((error) => options.logger?.warn(`Polling delay interrupted: ${(error as Error).message}`));
