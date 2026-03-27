@@ -58,9 +58,9 @@
         "vitest-mock-extended": "^3.1.0"
     },
     "engines": {
-        "node": "^24.13.0"
+        "node": "^24.14.1"
     },
     "volta": {
-        "node": "24.13.0"
+        "node": "24.14.1"
     }
 }

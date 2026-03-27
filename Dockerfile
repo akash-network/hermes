@@ -1,7 +1,7 @@
 # ====================
 # Builder Stage
 # ====================
-FROM node:24.13.0-alpine AS builder
+FROM node:24.14.1-alpine AS builder
 
 WORKDIR /app
 
@@ -18,7 +18,7 @@ COPY tsconfig.json ./
 # Build TypeScript
 RUN npm run build
 
-FROM node:24.13.0-alpine
+FROM node:24.14.1-alpine
 
 # Labels for container metadata
 LABEL org.opencontainers.image.title="Akash Hermes Client"
