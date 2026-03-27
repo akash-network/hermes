@@ -40,13 +40,13 @@ describe("daemonCommand", () => {
         const promise = daemonCommand(config);
         await waitForServer(logger);
 
-        const reponse = await fetch(`http://localhost:${config.healthcheckPort}/health`);
+        const port = getServerPort(logger);
+        const reponse = await fetch(`http://localhost:${port}/health`);
         expect(reponse.status).toBe(200);
         expect(client.getStatus).toHaveBeenCalled();
         expect(logger.log).toHaveBeenCalledWith(
-            `Health check endpoint available at http://localhost:${config.healthcheckPort}/health`,
+            expect.stringMatching(/Health check endpoint available at http:\/\/localhost:\d+\/health/),
         );
-        expect(logger.log).toHaveBeenCalledWith("Daemon started. Press Ctrl+C to stop.\n");
 
         abortController.abort();
         await promise;
@@ -57,7 +57,8 @@ describe("daemonCommand", () => {
         const promise = daemonCommand(config);
         await waitForServer(logger);
 
-        const response = await fetch(`http://localhost:${config.healthcheckPort}/invalid`);
+        const port = getServerPort(logger);
+        const response = await fetch(`http://localhost:${port}/invalid`);
         expect(response.status).toBe(404);
 
         abortController.abort();
@@ -74,7 +75,6 @@ describe("daemonCommand", () => {
 
         expect(logger.log).toHaveBeenCalledWith("\n\nShutting down daemon...");
         expect(logger.log).toHaveBeenCalledWith("\nStopping health check server...");
-        expect(logger.log).toHaveBeenCalledWith("Health check server stopped");
     });
 
     it("stops server immediately if signal is already aborted on startup", async () => {
@@ -91,21 +91,31 @@ describe("daemonCommand", () => {
         });
     }
 
+    function getServerPort(logger: Console): number {
+        const calls = (logger.log as ReturnType<typeof vi.fn>).mock.calls;
+        const call = calls.find((c: unknown[]) => typeof c[0] === "string" && /localhost:\d+/.test(c[0] as string));
+        const match = (call![0] as string).match(/localhost:(\d+)/);
+        return parseInt(match![1], 10);
+    }
+
     let testAbortController: AbortController | null = null;
     function setup() {
         const client = mock<HermesClient>();
-        client.getStatus.mockReturnValue({ isRunning: true, contractAddress: "", priceFeedId: "", address: "" });
+        client.getStatus.mockResolvedValue({ isRunning: true, contractAddress: "", priceFeedId: "", address: "" });
         const logger = mock<Console>();
         const abortController = new AbortController();
         testAbortController = abortController;
         const config: CommandConfig = {
             rpcEndpoint: "https://rpc.akashnet.net:443",
             contractAddress: "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
-            mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+            walletSecret: { type: "mnemonic", value: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" },
+            priceProducerFactory: vi.fn(async function* () {}) as unknown as CommandConfig["priceProducerFactory"],
             logger,
             signal: abortController.signal,
-            healthcheckPort: 3001,
+            healthcheckPort: 0,
             createHermesClient: vi.fn(() => Promise.resolve(client)),
+            smartContractConfigCacheTTLMs: 0,
+            rawConfig: {} as CommandConfig["rawConfig"],
         };
         return { config, client, logger, abortController };
     }

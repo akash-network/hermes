@@ -175,11 +175,12 @@ akash query wasm contract-state smart $CONTRACT_ADDRESS '{"get_config":{}}'
 | `WALLET_SECRET` | Yes | - | Either `privateKey:<private key in hex format>` or `mnemonic:<12/24 words>` |
 | `HERMES_ENDPOINT` | No | `https://hermes.pyth.network` | Pyth Hermes API |
 | `PRICE_DEVIATION_TOLERANCE` | No | 0 | absolute or percentage value for price deviations which should be ignored (e.g., `100` or `10%`) |
-| `UPDATE_INTERVAL_MS` | No | `300000` | Update interval (5 min) |
+| `UPDATE_INTERVAL_MS` | No | `5000` | Update interval (default 5 sec) |
 | `GAS_PRICE` | No | `0.025uakt` | Gas price |
 | `DENOM` | No | `uakt` | Token denomination |
 | `HEALTHCHECK_PORT` | No | 3000 | healthcheck server port |
 | `OTEL_RESOURCE_ATTRIBUTES` | No | <empty> | additional attributes attached to all metrics (e.g., `service.name=hermes,service.version=1.1.0,deployment.environment=production`) |
+| `SMART_CONTRACT_CONFIG_CACHE_TTL_MS` | No | 3600000 (1h) | smart contract config cache ttl in milliseconds |
 
 ### Instrumentation
 
