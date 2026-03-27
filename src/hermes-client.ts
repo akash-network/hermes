@@ -164,6 +164,7 @@ export class HermesClient {
     #senderAddress?: string;
     readonly #config: Required<Omit<HermesConfig, "fetch" | "logger" | "connectWithSigner">>;
     #isRunning = false;
+    #lastPriceUpdateReceivedAt?: string;
     #logger: Exclude<HermesConfig["logger"], undefined>;
     #connectWithSigner: typeof SigningCosmWasmClient.connectWithSigner;
     #smartContractConfig: {
@@ -528,6 +529,18 @@ export class HermesClient {
             const consumePrices = async () => {
                 for await (const priceUpdate of priceStream) {
                     priceUpdates.set(priceUpdate);
+
+                    const price = priceUpdate.priceData.price;
+                    this.#logger?.log(
+                        `Received price from Hermes: ${price.price} (expo: ${price.expo})`,
+                    );
+                    this.#logger?.log(
+                        `  Confidence: ${price.conf}, Publish time: ${price.publish_time}`,
+                    );
+                    this.#logger?.log(
+                        `  VAA size: ${priceUpdate.vaa.length} bytes (base64)`,
+                    );
+                    this.#lastPriceUpdateReceivedAt = new Date().toISOString();
                 }
                 controller.abort();
             };
@@ -558,6 +571,7 @@ export class HermesClient {
         address?: string;
         priceFeedId?: string;
         contractAddress: string;
+        lastPriceUpdateReceivedAt?: string;
     }> {
         // SEC-08: Only return non-sensitive operational status fields.
         // Never include mnemonic, gasPrice, rpcEndpoint, or full config.
@@ -568,6 +582,7 @@ export class HermesClient {
             address: this.#senderAddress,
             priceFeedId: smartContractConfig.price_feed_id,
             contractAddress: this.#config.contractAddress,
+            lastPriceUpdateReceivedAt: this.#lastPriceUpdateReceivedAt,
         };
     }
 }

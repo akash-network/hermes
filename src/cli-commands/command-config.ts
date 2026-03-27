@@ -2,7 +2,8 @@ import { z } from "zod";
 import { HermesClient, type HermesConfig } from "../hermes-client.ts";
 import { validateContractAddress, validateWalletSecret } from "../validation.ts";
 import type { PriceProducerFactoryOptions } from "../types.ts";
-import { pollPriceStream } from "../price-stream/polling-price-stream.ts";
+import { pollPriceStream } from "../price-stream/polling-price-stream/polling-price-stream.ts";
+import { priceSSEStream } from "../price-stream/price-sse-stream/price-sse-stream.ts";
 
 export interface CommandConfig extends HermesConfig {
     createHermesClient: (config: HermesConfig) => Promise<HermesClient>;
@@ -41,6 +42,7 @@ const configSchema = z.object({
             });
         }
     }).optional(),
+    PRICE_FETCHING_METHOD: z.enum(["polling", "sse"]).default("polling"),
     UPDATE_INTERVAL_MS: z.coerce.number().int().nonnegative().default(5 * 1000), // Default to 5 seconds
     HEALTHCHECK_PORT: z.coerce.number().int().min(1).max(65535).default(3000),
     GAS_PRICE: z.string().regex(/^(\d+)(\.\d+)?uakt$/, { message: 'GAS_PRICE must be a valid number with unit (e.g., "0.025uakt")' }).default("0.025uakt"),
@@ -71,6 +73,13 @@ export function parseConfig(config: Record<string, string | undefined>): ParseCo
         priceDeviationTolerance: result.data.PRICE_DEVIATION_TOLERANCE,
         smartContractConfigCacheTTLMs: result.data.SMART_CONTRACT_CONFIG_CACHE_TTL_MS,
         priceProducerFactory(options: PriceProducerFactoryOptions) {
+            if (result.data.PRICE_FETCHING_METHOD === "sse") {
+                return priceSSEStream({
+                    ...options,
+                    unsafeAllowInsecureEndpoints,
+                    baseUrl: result.data.HERMES_ENDPOINT,
+                });
+            }
             return pollPriceStream({
                 ...options,
                 unsafeAllowInsecureEndpoints,
