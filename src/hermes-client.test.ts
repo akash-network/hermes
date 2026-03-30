@@ -2,6 +2,7 @@ import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mock } from "vitest-mock-extended";
 import { HermesClient, HermesConfig, classifyError } from "./hermes-client";
+import { priceStaleness, priceUpdateCounter } from "./metrics.ts";
 import type { PriceUpdate, PriceProducerFactory, PriceProducerFactoryOptions } from "./types.ts";
 
 // ============================================================
@@ -413,6 +414,52 @@ describe(HermesClient.name, () => {
 
                 expect(stargateClient.execute).toHaveBeenCalledTimes(1);
             });
+        });
+
+        it("records price staleness on successful update", async () => {
+            const stalenessSpy = vi.spyOn(priceStaleness, "record");
+            const { client, priceUpdate, stargateClient } = setup({
+                priceFeed: buildPriceFeed("10000", -2, 2000),
+            });
+            mockForUpdate(stargateClient, { price: "9000", expo: -2, publish_time: 1000 });
+
+            await client.initialize();
+            await client.updatePrice(priceUpdate);
+
+            expect(stalenessSpy).toHaveBeenCalledWith(1000);
+            stalenessSpy.mockRestore();
+        });
+
+        it("records price staleness on skipped update", async () => {
+            const stalenessSpy = vi.spyOn(priceStaleness, "record");
+            const { client, priceUpdate, stargateClient } = setup({
+                priceFeed: buildPriceFeed("10000", -2, 2000),
+            });
+            mockForSkip(stargateClient, { price: "10000", expo: -2, publish_time: 2000 });
+
+            await client.initialize();
+            await client.updatePrice(priceUpdate);
+
+            expect(stalenessSpy).toHaveBeenCalledWith(0);
+            stalenessSpy.mockRestore();
+        });
+
+        it("records error_code attribute on failure", async () => {
+            const counterSpy = vi.spyOn(priceUpdateCounter, "add");
+            const { client, stargateClient } = setup({
+                priceFeed: buildPriceFeed("10000", -2, 2000),
+            });
+
+            stargateClient.queryContractSmart
+                .mockResolvedValueOnce({ price_feed_id: "test-feed-id", update_fee: "1", wormhole_contract: "akash1wormhole", admin: "akash1admin", default_denom: "uakt", default_base_denom: "akt", data_sources: [] })
+                .mockResolvedValueOnce({ price: "9000", conf: "10", expo: -2, publish_time: 1000 });
+            stargateClient.execute.mockRejectedValueOnce(new Error("insufficient funds"));
+
+            await client.initialize();
+            await client.updatePrice(buildPriceFeed("10000", -2, 2000)).catch(() => {});
+
+            expect(counterSpy).toHaveBeenCalledWith(1, { result: "failure", error_code: "insufficient_balance" });
+            counterSpy.mockRestore();
         });
 
         function mockForUpdate(stargateClient: ReturnType<typeof setup>["stargateClient"], currentPrice: { price: string; expo: number; publish_time: number }) {

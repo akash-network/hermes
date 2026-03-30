@@ -14,7 +14,7 @@
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { DirectSecp256k1HdWallet, DirectSecp256k1Wallet, type OfflineDirectSigner } from "@cosmjs/proto-signing";
 import { GasPrice } from "@cosmjs/stargate";
-import { priceUpdateCounter } from "./metrics.ts";
+import { priceUpdateCounter, priceStaleness } from "./metrics.ts";
 import { latestValue } from "./price-stream/latest-value/latest-value.ts";
 import { PriceUpdateConfirmed } from "./price-update/price-update-confirmed/price-update-confirmed.ts";
 import type { Logger, PriceProducerFactory, PriceUpdate, PriceUpdater, PythPriceData } from "./types.ts";
@@ -432,6 +432,10 @@ export class HermesClient {
         try {
             const currentPrice = await this.queryCurrentPrice();
 
+            // Record staleness: how far behind on-chain is from Pyth
+            const staleness = priceUpdate.priceData.price.publish_time - currentPrice.publish_time;
+            priceStaleness.record(staleness);
+
             if (this.#canIgnorePriceUpdate(priceUpdate.priceData, currentPrice)) {
                 priceUpdateCounter.add(1, { result: "skipped" });
                 return;
@@ -462,7 +466,7 @@ export class HermesClient {
             // SEC-04: Sanitize error messages to prevent information leakage
             const safeMessage = sanitizeErrorMessage(error, "Failed to update price");
             this.#logger.error(safeMessage);
-            priceUpdateCounter.add(1, { result: "failure" });
+            priceUpdateCounter.add(1, { result: "failure", error_code: classifyError(error) });
             throw new Error(safeMessage);
         } finally {
             this.#logger.log(`Price updated in ${((performance.now() - startTime) / 1000).toFixed(2)} s`);
