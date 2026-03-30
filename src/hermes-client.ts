@@ -75,6 +75,11 @@ export interface HermesConfig {
      * Optional custom connectWithSigner function for testing or advanced use cases. Defaults to SigningCosmWasmClient.connectWithSigner.
      */
     connectWithSigner?: typeof SigningCosmWasmClient.connectWithSigner;
+    /**
+     * Delay in milliseconds between submission retries when insufficient balance is detected.
+     * @default 60000
+     */
+    insufficientBalanceRetryDelayMs?: number;
 }
 
 // =====================
@@ -171,6 +176,7 @@ export class HermesClient {
     #senderAddress?: string;
     readonly #config: Required<Omit<HermesConfig, "fetch" | "logger" | "connectWithSigner">>;
     #isRunning = false;
+    #insufficientBalanceCooldownUntil: number | null = null;
     #lastPriceReceivedAt?: string;
     #lastPriceUpdateAt?: string;
     #logger: Exclude<HermesConfig["logger"], undefined>;
@@ -200,6 +206,7 @@ export class HermesClient {
             gasPrice: config.gasPrice ?? "0.025uakt",
             unsafeAllowInsecureEndpoints,
             priceDeviationTolerance: config.priceDeviationTolerance ?? DEFAULT_PRICE_DEVIATION_TOLERANCE,
+            insufficientBalanceRetryDelayMs: config.insufficientBalanceRetryDelayMs ?? 60_000,
         };
         this.#logger = config.logger ?? console;
         this.#connectWithSigner = config.connectWithSigner ?? SigningCosmWasmClient.connectWithSigner;
@@ -464,9 +471,14 @@ export class HermesClient {
             this.#lastPriceUpdateAt = new Date().toISOString();
         } catch (error) {
             // SEC-04: Sanitize error messages to prevent information leakage
+            const errorCode = classifyError(error);
+            if (errorCode === "insufficient_balance") {
+                this.#insufficientBalanceCooldownUntil = Date.now() + this.#config.insufficientBalanceRetryDelayMs;
+                this.#logger.warn(`Entering insufficient balance cooldown for ${this.#config.insufficientBalanceRetryDelayMs}ms`);
+            }
             const safeMessage = sanitizeErrorMessage(error, "Failed to update price");
             this.#logger.error(safeMessage);
-            priceUpdateCounter.add(1, { result: "failure", error_code: classifyError(error) });
+            priceUpdateCounter.add(1, { result: "failure", error_code: errorCode });
             throw new Error(safeMessage);
         } finally {
             this.#logger.log(`Price updated in ${((performance.now() - startTime) / 1000).toFixed(2)} s`);
@@ -573,7 +585,15 @@ export class HermesClient {
             const updatePrices = async () => {
                 for await (const priceUpdate of priceUpdates) {
                     try {
+                        if (this.#insufficientBalanceCooldownUntil !== null) {
+                            if (Date.now() < this.#insufficientBalanceCooldownUntil) {
+                                this.#logger.warn("Skipping price update: insufficient balance cooldown active");
+                                continue;
+                            }
+                            this.#logger.log("Insufficient balance cooldown expired, retrying...");
+                        }
                         await this.#updatePrice(priceUpdate);
+                        this.#insufficientBalanceCooldownUntil = null;
                     } catch (error) {
                         this.#logger.error("Error in scheduled update:", error);
                     }

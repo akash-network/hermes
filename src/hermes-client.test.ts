@@ -903,6 +903,71 @@ describe(HermesClient.name, () => {
 
             expect(stargateClient.execute).toHaveBeenCalledTimes(1);
         });
+
+        it("enters cooldown on insufficient balance error and retries after delay", async () => {
+            vi.useFakeTimers();
+            // Use resolvers to control when each price update is delivered
+            const { promise: secondUpdateReady, resolve: releaseSecondUpdate } = Promise.withResolvers<void>();
+            const factory = vi.fn(async function* ({ signal }: PriceProducerFactoryOptions) {
+                // First update: will trigger insufficient funds
+                yield buildPriceFeed("10000", -2, 2000);
+                // Wait until test signals to release the second update (after cooldown)
+                await secondUpdateReady;
+                // Second update: will succeed after cooldown
+                yield buildPriceFeed("10200", -2, 4000);
+                if (signal && !signal.aborted) {
+                    await new Promise<void>(resolve => {
+                        signal.addEventListener("abort", () => resolve(), { once: true });
+                    });
+                }
+            });
+            const { client, stargateClient, logger } = setup({
+                priceProducerFactory: factory as unknown as PriceProducerFactory,
+                insufficientBalanceRetryDelayMs: 5000,
+            });
+
+            // queryConfig (from start())
+            stargateClient.queryContractSmart
+                .mockResolvedValueOnce({ price_feed_id: "test-feed-id", update_fee: "1", wormhole_contract: "akash1wormhole", admin: "akash1admin", default_denom: "uakt", default_base_denom: "akt", data_sources: [] });
+            // First update attempt: queryCurrentPrice then execute fails with insufficient funds
+            stargateClient.queryContractSmart
+                .mockResolvedValueOnce({ price: "9000", conf: "10", expo: -2, publish_time: 1000 });
+            stargateClient.execute.mockRejectedValueOnce(new Error("insufficient funds"));
+
+            // Second update (after cooldown): queryCurrentPrice then execute succeeds
+            stargateClient.queryContractSmart
+                .mockResolvedValueOnce({ price: "9000", conf: "10", expo: -2, publish_time: 1000 });
+            stargateClient.execute.mockResolvedValueOnce({
+                transactionHash: "TX_RECOVERY",
+                gasUsed: 500000n,
+                gasWanted: 600000n,
+                height: 100,
+                events: [],
+                logs: [],
+            });
+
+            const ac = new AbortController();
+            const startPromise = client.start({ signal: ac.signal });
+
+            // Wait for the cooldown warning to appear
+            await vi.waitFor(() => {
+                expect(logger.warn).toHaveBeenCalledWith(
+                    expect.stringContaining("insufficient balance"),
+                );
+            });
+
+            // Advance time past the cooldown and release the next update
+            await vi.advanceTimersByTimeAsync(5000);
+            releaseSecondUpdate();
+
+            // Wait for the recovery attempt to succeed
+            await vi.waitFor(() => {
+                expect(stargateClient.execute).toHaveBeenCalledTimes(2);
+            });
+
+            ac.abort();
+            await startPromise;
+        });
     });
 
     describe("classifyError()", () => {
@@ -975,6 +1040,7 @@ function setup(input?: Partial<HermesConfig> & {
         priceDeviationTolerance: input?.priceDeviationTolerance ?? { type: "absolute", value: 0 },
         priceProducerFactory: (input?.priceProducerFactory ?? priceProducerFactory) as PriceProducerFactory,
         smartContractConfigCacheTTLMs: input?.smartContractConfigCacheTTLMs ?? 60_000,
+        insufficientBalanceRetryDelayMs: input?.insufficientBalanceRetryDelayMs,
     });
 
     return { client, priceUpdate, priceProducerFactory, logger, stargateClient };
