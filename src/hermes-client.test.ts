@@ -444,8 +444,9 @@ describe(HermesClient.name, () => {
             stalenessSpy.mockRestore();
         });
 
-        it("records error_code attribute on failure", async () => {
+        it("records error_code attribute and staleness on failure", async () => {
             const counterSpy = vi.spyOn(priceUpdateCounter, "add");
+            const stalenessSpy = vi.spyOn(priceStaleness, "record");
             const { client, stargateClient } = setup({
                 priceFeed: buildPriceFeed("10000", -2, 2000),
             });
@@ -459,7 +460,9 @@ describe(HermesClient.name, () => {
             await client.updatePrice(buildPriceFeed("10000", -2, 2000)).catch(() => {});
 
             expect(counterSpy).toHaveBeenCalledWith(1, { result: "failure", error_code: "insufficient_balance" });
+            expect(stalenessSpy).toHaveBeenCalledWith(1000);
             counterSpy.mockRestore();
+            stalenessSpy.mockRestore();
         });
 
         function mockForUpdate(stargateClient: ReturnType<typeof setup>["stargateClient"], currentPrice: { price: string; expo: number; publish_time: number }) {
