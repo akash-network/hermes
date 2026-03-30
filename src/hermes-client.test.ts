@@ -1,7 +1,7 @@
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mock } from "vitest-mock-extended";
-import { HermesClient, HermesConfig } from "./hermes-client";
+import { HermesClient, HermesConfig, classifyError } from "./hermes-client";
 import type { PriceUpdate, PriceProducerFactory, PriceProducerFactoryOptions } from "./types.ts";
 
 // ============================================================
@@ -852,6 +852,44 @@ describe(HermesClient.name, () => {
             ac.abort();
 
             expect(stargateClient.execute).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("classifyError()", () => {
+        it('returns "insufficient_balance" for insufficient funds error', () => {
+            expect(classifyError(new Error("insufficient funds: 100uakt < 1000uakt"))).toBe("insufficient_balance");
+        });
+
+        it('returns "insufficient_balance" for insufficient fee error', () => {
+            expect(classifyError(new Error("insufficient fee"))).toBe("insufficient_balance");
+        });
+
+        it('returns "timeout" for timeout error', () => {
+            expect(classifyError(new Error("request timeout"))).toBe("timeout");
+        });
+
+        it('returns "timeout" for ETIMEDOUT error', () => {
+            expect(classifyError(new Error("connect ETIMEDOUT 1.2.3.4:443"))).toBe("timeout");
+        });
+
+        it('returns "connection_issue" for ECONNREFUSED error', () => {
+            expect(classifyError(new Error("connect ECONNREFUSED 127.0.0.1:26657"))).toBe("connection_issue");
+        });
+
+        it('returns "connection_issue" for ECONNRESET error', () => {
+            expect(classifyError(new Error("read ECONNRESET"))).toBe("connection_issue");
+        });
+
+        it('returns "connection_issue" for ENOTFOUND error', () => {
+            expect(classifyError(new Error("getaddrinfo ENOTFOUND rpc.example.com"))).toBe("connection_issue");
+        });
+
+        it('returns "unknown" for unrecognized errors', () => {
+            expect(classifyError(new Error("something unexpected"))).toBe("unknown");
+        });
+
+        it('returns "unknown" for non-Error values', () => {
+            expect(classifyError("string error")).toBe("unknown");
         });
     });
 });
