@@ -37,3 +37,28 @@ export interface HermesResponse {
     };
     parsed: PythPriceData[];
 }
+
+export interface PriceUpdater {
+    updatePrice: (priceUpdate: PriceUpdate, options: PriceUpdateOptions) => Promise<{
+        transactionHash: string;
+        gasUsed?: bigint;
+    }>;
+}
+
+export interface PriceUpdateOptions {
+    senderAddress: string;
+    contractAddress: string;
+    denom: string;
+    updateFee: string;
+}
+
+export interface UpdatePriceFeedMsg {
+    update_price_feed: {
+        // VAA data from Pyth Hermes API (base64 encoded Binary)
+        // The Pyth contract will:
+        // 1. Verify VAA via Wormhole contract
+        // 2. Parse Pyth price attestation from payload
+        // 3. Relay to x/oracle module
+        vaa: string;
+    };
+}
