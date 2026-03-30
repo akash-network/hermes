@@ -128,6 +128,7 @@ describe("SEC-08: Sensitive data in config exposure", () => {
             contractAddress: "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
             priceFeedId: "test-feed-id",
             address: expect.stringMatching(/^akash1[0-9a-z]{38}$/),
+            lastPriceUpdateReceivedAt: undefined,
         });
         expect(JSON.stringify(status)).not.toContain("abandon");
     });
@@ -784,6 +785,45 @@ describe(HermesClient.name, () => {
             } finally {
                 ac.abort();
             }
+        });
+
+        it("sets lastPriceUpdateReceivedAt in ISO-8601 format after receiving a price update", async () => {
+            const priceUpdate = buildPriceFeed("123.45", -8, 1234567890);
+            const factory = blockingFactory(priceUpdate);
+            const { client, stargateClient } = setup({ priceProducerFactory: factory });
+            const ac = new AbortController();
+
+            stargateClient.queryContractSmart
+                .mockResolvedValueOnce({ price_feed_id: "test-feed-id", update_fee: "1", wormhole_contract: "akash1wormhole", admin: "akash1admin", default_denom: "uakt", default_base_denom: "akt", data_sources: [] })
+                .mockResolvedValueOnce({ price: "12345", conf: "10", expo: -8, publish_time: 1234567880 });
+            stargateClient.execute.mockResolvedValueOnce({
+                transactionHash: "TX_TS",
+                gasUsed: 500000n,
+                gasWanted: 600000n,
+                height: 100,
+                events: [],
+                logs: [],
+            });
+
+            const startPromise = client.start({ signal: ac.signal });
+            await vi.waitFor(async () => {
+                const status = await client.getStatus();
+                expect(status.lastPriceUpdateReceivedAt).toBeDefined();
+            });
+
+            const status = await client.getStatus();
+            expect(status.lastPriceUpdateReceivedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z$/);
+
+            ac.abort();
+            await startPromise;
+        });
+
+        it("lastPriceUpdateReceivedAt is undefined before any price update is received", async () => {
+            const { client } = setup();
+            await client.initialize();
+
+            const status = await client.getStatus();
+            expect(status.lastPriceUpdateReceivedAt).toBeUndefined();
         });
 
         it("processes latest price update from stream when updates arrive faster than consumption", async () => {

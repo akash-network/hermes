@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { HermesResponse } from "../types.ts";
+import type { HermesResponse } from "../../types.ts";
 import { pollPriceStream, type PollPriceStreamOptions } from "./polling-price-stream.ts";
 
 describe("pollPriceStream", () => {
@@ -104,22 +104,6 @@ describe("pollPriceStream", () => {
 
         expect(logger.error).toHaveBeenCalledWith("No VAA binary data returned from Hermes");
         expect(result.value).toEqual({ priceData: goodData.parsed[0], vaa: goodData.binary.data[0] });
-    });
-
-    it("logs price details on successful fetch", async () => {
-        const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
-        const data = createHermesResponse();
-        const options = createOptions({
-            fetch: vi.fn().mockResolvedValueOnce(mockFetchResponse(data)),
-            logger,
-        });
-
-        const gen = pollPriceStream(options);
-        await gen.next();
-
-        expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("Fetched price from Hermes: 1000"));
-        expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("Confidence: 10"));
-        expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("VAA size:"));
     });
 
     it("polls repeatedly yielding updates", async () => {

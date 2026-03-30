@@ -3,9 +3,10 @@ import https from "node:https";
 import { performance } from "node:perf_hooks";
 import { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
-import { hermesFetchDuration } from "../metrics.ts";
-import type { HermesResponse, PriceProducerFactoryOptions, PriceUpdate, PythPriceData } from "../types.ts";
-import { validateEndpointUrl } from "../validation.ts";
+import { hermesFetchDuration } from "../../metrics.ts";
+import type { HermesResponse, PriceProducerFactoryOptions, PriceUpdate } from "../../types.ts";
+import { validateEndpointUrl } from "../../validation.ts";
+import { parsePriceUpdate } from "../utils.ts";
 
 export async function *pollPriceStream(options: PollPriceStreamOptions): AsyncGenerator<PriceUpdate> {
     if (!options.priceFeedId) {
@@ -37,7 +38,6 @@ export async function *pollPriceStream(options: PollPriceStreamOptions): AsyncGe
             continue;
         } finally {
             hermesFetchDuration.record(performance.now() - fetchStart, { status });
-            console.log(`Fetch from Hermes completed with status ${status} in ${performance.now() - fetchStart} ms`);
         }
 
         if (!response.ok) {
@@ -48,32 +48,22 @@ export async function *pollPriceStream(options: PollPriceStreamOptions): AsyncGe
             continue;
         }
 
-        const data = await response.json() as HermesResponse;
-
-        if (!data.parsed || data.parsed.length === 0) {
-            options.logger?.error("No price data returned from Hermes");
+        let parsedData: HermesResponse;
+        try {
+            parsedData = await response.json() as HermesResponse;
+        } catch (error) {
+            options.logger?.error(`Error parsing JSON from Hermes: ${(error as Error).message}`);
             continue;
         }
 
-        if (!data.binary?.data || data.binary.data.length === 0) {
-            options.logger?.error("No VAA binary data returned from Hermes");
+        const priceUpdateResult = parsePriceUpdate(parsedData);
+
+        if (!priceUpdateResult.ok) {
+            options.logger?.error(priceUpdateResult.message);
             continue;
         }
 
-        const priceData: PythPriceData = data.parsed[0];
-        const vaa: string = data.binary.data[0];
-
-        options.logger?.log(
-            `Fetched price from Hermes: ${priceData.price.price} (expo: ${priceData.price.expo})`,
-        );
-        options.logger?.log(
-            `  Confidence: ${priceData.price.conf}, Publish time: ${priceData.price.publish_time}`,
-        );
-        options.logger?.log(
-            `  VAA size: ${vaa.length} bytes (base64)`,
-        );
-
-        yield { priceData, vaa };
+        yield priceUpdateResult.value;
         if (options.pollingIntervalMs > 0) {
             await delay(options.pollingIntervalMs, undefined, { signal: options.signal })
                 .catch((error) => options.logger?.warn(`Polling delay interrupted: ${(error as Error).message}`));
