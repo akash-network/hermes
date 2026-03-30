@@ -31,9 +31,10 @@ export async function *priceSSEStream(options: PriceSSEStreamOptions): AsyncGene
             }
 
             options.logger?.log(`Connecting to Hermes price stream at ${options.baseUrl}${lastEventId ? ` (Last-Event-ID: ${lastEventId})` : ""}...`);
+            const timeoutSignal = AbortSignal.timeout(10_000);
             const response = await fetch(`${options.baseUrl}/v2/updates/price/stream?${params.toString()}`, {
                 headers,
-                signal: options.signal,
+                signal: options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal,
             });
             if (!response.ok) {
                 const statusText = response.status ? ` (HTTP ${response.status})` : "";

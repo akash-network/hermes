@@ -2,7 +2,7 @@ import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mock } from "vitest-mock-extended";
 import { HermesClient, HermesConfig, classifyError } from "./hermes-client";
-import { priceStaleness, priceUpdateCounter } from "./metrics.ts";
+import { blockchainPriceStaleness, priceUpdateCounter } from "./metrics.ts";
 import type { PriceUpdate, PriceProducerFactory, PriceProducerFactoryOptions } from "./types.ts";
 
 // ============================================================
@@ -417,7 +417,7 @@ describe(HermesClient.name, () => {
         });
 
         it("records price staleness on successful update", async () => {
-            const stalenessSpy = vi.spyOn(priceStaleness, "record");
+            const stalenessSpy = vi.spyOn(blockchainPriceStaleness, "record");
             const { client, priceUpdate, stargateClient } = setup({
                 priceFeed: buildPriceFeed("10000", -2, 2000),
             });
@@ -431,7 +431,7 @@ describe(HermesClient.name, () => {
         });
 
         it("records price staleness on skipped update", async () => {
-            const stalenessSpy = vi.spyOn(priceStaleness, "record");
+            const stalenessSpy = vi.spyOn(blockchainPriceStaleness, "record");
             const { client, priceUpdate, stargateClient } = setup({
                 priceFeed: buildPriceFeed("10000", -2, 2000),
             });
@@ -446,7 +446,7 @@ describe(HermesClient.name, () => {
 
         it("records error_code attribute and staleness on failure", async () => {
             const counterSpy = vi.spyOn(priceUpdateCounter, "add");
-            const stalenessSpy = vi.spyOn(priceStaleness, "record");
+            const stalenessSpy = vi.spyOn(blockchainPriceStaleness, "record");
             const { client, stargateClient } = setup({
                 priceFeed: buildPriceFeed("10000", -2, 2000),
             });

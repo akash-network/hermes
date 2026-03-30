@@ -75,9 +75,9 @@ describe(priceSSEStream.name, () => {
         const gen = priceSSEStream(options);
         await gen.next();
 
-        expect(fetchMock.mock.calls[0][1]).toEqual(
-            expect.objectContaining({ signal: controller.signal }),
-        );
+        const fetchOptions = fetchMock.mock.calls[0][1] as { signal: AbortSignal };
+        expect(fetchOptions.signal).toBeInstanceOf(AbortSignal);
+        expect(fetchOptions.signal.aborted).toBe(false);
     });
 
     it("throws on non-ok HTTP response after max retries", async () => {

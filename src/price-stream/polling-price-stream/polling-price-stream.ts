@@ -27,8 +27,12 @@ export async function *pollPriceStream(options: PollPriceStreamOptions): AsyncGe
     while (!options.signal?.aborted) {
         const fetchStart = performance.now();
         response = undefined;
+        status = 0;
         try {
-            response = await fetch(`${options.baseUrl}/v2/updates/price/latest?${params.toString()}`);
+            const timeoutSignal = AbortSignal.timeout(10_000);
+            response = await fetch(`${options.baseUrl}/v2/updates/price/latest?${params.toString()}`, {
+                signal: options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal,
+            });
             status = response.status;
         } catch (error) {
             if (error instanceof Error && (error.name === "AbortError" || error.message === "AbortError")) {
