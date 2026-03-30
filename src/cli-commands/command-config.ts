@@ -9,6 +9,7 @@ export interface CommandConfig extends HermesConfig {
     createHermesClient: (config: HermesConfig) => Promise<HermesClient>;
     signal: AbortSignal;
     healthcheckPort: number;
+    insufficientBalanceRetryDelayMs: number;
     rawConfig: z.infer<typeof configSchema>;
 }
 
@@ -49,6 +50,7 @@ const configSchema = z.object({
     DENOM: z.string().default("uakt"),
     NODE_ENV: z.enum(["development", "production"]).optional(),
     SMART_CONTRACT_CONFIG_CACHE_TTL_MS: z.coerce.number().int().min(1000).positive().default(60 * 60 * 1000),
+    INSUFFICIENT_BALANCE_RETRY_DELAY_MS: z.coerce.number().int().nonnegative().default(60_000),
 });
 
 type ParsedConfig = Omit<CommandConfig, "signal" | "logger">;
@@ -72,6 +74,7 @@ export function parseConfig(config: Record<string, string | undefined>): ParseCo
         denom: result.data.DENOM,
         priceDeviationTolerance: result.data.PRICE_DEVIATION_TOLERANCE,
         smartContractConfigCacheTTLMs: result.data.SMART_CONTRACT_CONFIG_CACHE_TTL_MS,
+        insufficientBalanceRetryDelayMs: result.data.INSUFFICIENT_BALANCE_RETRY_DELAY_MS,
         priceProducerFactory(options: PriceProducerFactoryOptions) {
             if (result.data.PRICE_FETCHING_METHOD === "sse") {
                 return priceSSEStream({
