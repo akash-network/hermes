@@ -14,7 +14,7 @@
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { DirectSecp256k1HdWallet, DirectSecp256k1Wallet, type OfflineDirectSigner } from "@cosmjs/proto-signing";
 import { GasPrice } from "@cosmjs/stargate";
-import { priceUpdateCounter } from "./metrics.ts";
+import { priceUpdateCounter, blockchainPriceStaleness } from "./metrics.ts";
 import { latestValue } from "./price-stream/latest-value/latest-value.ts";
 import { PriceUpdateConfirmed } from "./price-update/price-update-confirmed/price-update-confirmed.ts";
 import type { Logger, PriceProducerFactory, PriceUpdate, PriceUpdater, PythPriceData } from "./types.ts";
@@ -75,6 +75,11 @@ export interface HermesConfig {
      * Optional custom connectWithSigner function for testing or advanced use cases. Defaults to SigningCosmWasmClient.connectWithSigner.
      */
     connectWithSigner?: typeof SigningCosmWasmClient.connectWithSigner;
+    /**
+     * Delay in milliseconds between submission retries when insufficient balance is detected.
+     * @default 60000
+     */
+    insufficientBalanceRetryDelayMs?: number;
 }
 
 // =====================
@@ -154,7 +159,9 @@ export class HermesClient {
     #senderAddress?: string;
     readonly #config: Required<Omit<HermesConfig, "fetch" | "logger" | "connectWithSigner">>;
     #isRunning = false;
-    #lastPriceUpdateReceivedAt?: string;
+    #insufficientBalanceCooldownUntil: number | null = null;
+    #lastPriceReceivedAt?: string;
+    #lastPriceUpdateAt?: string;
     #logger: Exclude<HermesConfig["logger"], undefined>;
     #connectWithSigner: typeof SigningCosmWasmClient.connectWithSigner;
     #smartContractConfig: {
@@ -182,6 +189,7 @@ export class HermesClient {
             gasPrice: config.gasPrice ?? "0.025uakt",
             unsafeAllowInsecureEndpoints,
             priceDeviationTolerance: config.priceDeviationTolerance ?? DEFAULT_PRICE_DEVIATION_TOLERANCE,
+            insufficientBalanceRetryDelayMs: config.insufficientBalanceRetryDelayMs ?? 60_000,
         };
         this.#logger = config.logger ?? console;
         this.#connectWithSigner = config.connectWithSigner ?? SigningCosmWasmClient.connectWithSigner;
@@ -270,14 +278,15 @@ export class HermesClient {
      */
     async queryConfig(): Promise<ConfigResponse> {
         if (!this.#smartContractConfig.value || Date.now() > this.#smartContractConfig.expiresAt) {
+            this.#smartContractConfig.expiresAt = Date.now() + this.#config.smartContractConfigCacheTTLMs;
             this.#smartContractConfig.value = this.#getCosmClient().queryContractSmart(
                 this.#config.contractAddress,
                 { get_config: {} },
             ).catch((error) => {
                 this.#smartContractConfig.value = undefined;
+                this.#smartContractConfig.expiresAt = 0;
                 throw error;
             });
-            this.#smartContractConfig.expiresAt = Date.now() + this.#config.smartContractConfigCacheTTLMs;
         }
 
         const config = await this.#smartContractConfig.value;
@@ -373,6 +382,27 @@ export class HermesClient {
         return result.transactionHash;
     }
 
+    async updatePrice(options?: {
+        signal?: AbortSignal;
+    }): Promise<void> {
+        const smartCotractConfig = await this.queryConfig();
+        const priceStream = this.#config.priceProducerFactory({
+            priceFeedId: smartCotractConfig.price_feed_id,
+            logger: this.#logger,
+            signal: options?.signal,
+        });
+        const priceUpdate = await priceStream.next();
+
+        if (priceUpdate.value) {
+            await this.#updatePrice(priceUpdate.value);
+            this.#logger.log("\nUpdate completed successfully!");
+        } else {
+            this.#logger.log("\nUpdate skipped because no new price was available.");
+        }
+
+        priceStream.return?.();
+    }
+
     /**
      * Update the oracle contract with new price data
      *
@@ -382,15 +412,26 @@ export class HermesClient {
      * 3. Send VAA to Pyth contract
      * 4. Contract verifies VAA via Wormhole, parses Pyth payload, relays to x/oracle
      */
-    async updatePrice(priceUpdate: PriceUpdate): Promise<void> {
+    async #updatePrice(priceUpdate: PriceUpdate): Promise<void> {
         if (!this.#senderAddress) {
             throw new Error("Client not initialized");
+        }
+
+        if (this.#insufficientBalanceCooldownUntil !== null) {
+            if (Date.now() < this.#insufficientBalanceCooldownUntil) {
+                this.#logger.warn("Skipping price update: insufficient balance cooldown active");
+                return;
+            }
+            this.#logger.log("Insufficient balance cooldown expired, retrying...");
         }
 
         const startTime = performance.now();
 
         try {
             const currentPrice = await this.queryCurrentPrice();
+
+            const staleness = priceUpdate.priceData.price.publish_time - currentPrice.publish_time;
+            blockchainPriceStaleness.record(staleness);
 
             if (this.#canIgnorePriceUpdate(priceUpdate.priceData, currentPrice)) {
                 priceUpdateCounter.add(1, { result: "skipped" });
@@ -399,7 +440,6 @@ export class HermesClient {
 
             const config = await this.queryConfig();
 
-            // Execute update
             this.#logger.log("Submitting VAA to Pyth contract...");
             this.#logger.log(`  Wormhole contract: ${config.wormhole_contract}`);
             this.#priceUpdater ??= new PriceUpdateConfirmed(this.#getCosmClient());
@@ -417,11 +457,18 @@ export class HermesClient {
             }
             this.#logger.log(`  New price: ${price.price} (expo: ${price.expo})`);
             priceUpdateCounter.add(1, { result: "success" });
+            this.#lastPriceUpdateAt = new Date().toISOString();
+            this.#insufficientBalanceCooldownUntil = null;
         } catch (error) {
             // SEC-04: Sanitize error messages to prevent information leakage
+            const errorCode = classifyError(error);
+            if (errorCode === "insufficient_balance") {
+                this.#insufficientBalanceCooldownUntil = Date.now() + this.#config.insufficientBalanceRetryDelayMs;
+                this.#logger.warn(`Entering insufficient balance cooldown for ${this.#config.insufficientBalanceRetryDelayMs}ms`);
+            }
             const safeMessage = sanitizeErrorMessage(error, "Failed to update price");
             this.#logger.error(safeMessage);
-            priceUpdateCounter.add(1, { result: "failure" });
+            priceUpdateCounter.add(1, { result: "failure", error_code: errorCode });
             throw new Error(safeMessage);
         } finally {
             this.#logger.log(`Price updated in ${((performance.now() - startTime) / 1000).toFixed(2)} s`);
@@ -521,14 +568,14 @@ export class HermesClient {
                     this.#logger?.log(
                         `  VAA size: ${priceUpdate.vaa.length} bytes (base64)`,
                     );
-                    this.#lastPriceUpdateReceivedAt = new Date().toISOString();
+                    this.#lastPriceReceivedAt = new Date().toISOString();
                 }
                 controller.abort();
             };
             const updatePrices = async () => {
                 for await (const priceUpdate of priceUpdates) {
                     try {
-                        await this.updatePrice(priceUpdate);
+                        await this.#updatePrice(priceUpdate);
                     } catch (error) {
                         this.#logger.error("Error in scheduled update:", error);
                     }
@@ -541,6 +588,8 @@ export class HermesClient {
             const safeMessage = sanitizeErrorMessage(error, "Failed to start Hermes client");
             this.#logger.error(safeMessage);
             throw new Error(safeMessage);
+        } finally {
+            this.#isRunning = false;
         }
     }
 
@@ -553,6 +602,7 @@ export class HermesClient {
         priceFeedId?: string;
         contractAddress: string;
         lastPriceUpdateReceivedAt?: string;
+        lastPriceUpdateAt?: string;
     }> {
         // SEC-08: Only return non-sensitive operational status fields.
         // Never include mnemonic, gasPrice, rpcEndpoint, or full config.
@@ -563,12 +613,29 @@ export class HermesClient {
             address: this.#senderAddress,
             priceFeedId: smartContractConfig.price_feed_id,
             contractAddress: this.#config.contractAddress,
-            lastPriceUpdateReceivedAt: this.#lastPriceUpdateReceivedAt,
+            lastPriceUpdateReceivedAt: this.#lastPriceReceivedAt,
+            lastPriceUpdateAt: this.#lastPriceUpdateAt,
         };
     }
 }
 
-// Export types for external use
 export type {
     ConfigResponse, DataSourceResponse, OracleParamsResponse, PriceFeedIdResponse, PriceFeedResponse, PriceResponse, RefreshOracleParamsMsg, TransferAdminMsg, UpdateFeeMsg,
 };
+
+export type ErrorCode = "insufficient_balance" | "timeout" | "connection_issue" | "unknown";
+
+export function classifyError(error: unknown): ErrorCode {
+    const message = error instanceof Error ? error.message : "";
+
+    if (/insufficient funds|insufficient fee/i.test(message)) {
+        return "insufficient_balance";
+    }
+    if (/timeout|ETIMEDOUT/i.test(message)) {
+        return "timeout";
+    }
+    if (/ECONNREFUSED|ECONNRESET|ENOTFOUND/i.test(message)) {
+        return "connection_issue";
+    }
+    return "unknown";
+}

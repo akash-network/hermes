@@ -8,3 +8,7 @@ export const hermesFetchDuration = meter.createHistogram("hermes.price_fetch_dur
     description: "Duration of Hermes API price fetch in milliseconds",
     unit: "ms",
 });
+export const blockchainPriceStaleness = meter.createGauge("hermes.chain_price_staleness", {
+    description: "How far behind the on-chain price is from the latest Pyth price",
+    unit: "s",
+});
