@@ -187,6 +187,28 @@ describe("parseConfig", () => {
         expect((result as Extract<typeof result, { ok: false }>).error).toContain("PRICE_DEVIATION_TOLERANCE");
     });
 
+    describe("INSUFFICIENT_BALANCE_RETRY_DELAY_MS", () => {
+        it("defaults to 60000 when not provided", () => {
+            const result = parseConfig(validEnv());
+
+            expect(result.ok).toBe(true);
+            expect((result as Extract<typeof result, { ok: true }>).value.insufficientBalanceRetryDelayMs).toBe(60000);
+        });
+
+        it("parses custom value", () => {
+            const result = parseConfig(validEnv({ INSUFFICIENT_BALANCE_RETRY_DELAY_MS: "120000" }));
+
+            expect(result.ok).toBe(true);
+            expect((result as Extract<typeof result, { ok: true }>).value.insufficientBalanceRetryDelayMs).toBe(120000);
+        });
+
+        it("rejects negative values", () => {
+            const result = parseConfig(validEnv({ INSUFFICIENT_BALANCE_RETRY_DELAY_MS: "-1" }));
+
+            expect(result.ok).toBe(false);
+        });
+    });
+
     function validEnv(overrides: Record<string, string | undefined> = {}) {
         return {
             CONTRACT_ADDRESS: "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
