@@ -176,7 +176,8 @@ akash query wasm contract-state smart $CONTRACT_ADDRESS '{"get_config":{}}'
 | `HERMES_ENDPOINT` | No | `https://hermes.pyth.network` | Pyth Hermes API |
 | `PRICE_DEVIATION_TOLERANCE` | No | 0 | absolute or percentage value for price deviations which should be ignored (e.g., `100` or `10%`) |
 | `PRICE_FETCHING_METHOD` | No | polling | `polling` or `sse` |
-| `UPDATE_INTERVAL_MS` | No | `5000` | Update interval (default 5 sec) |
+| `PRICE_UPDATE_METHOD` | No | confirmed-tx | `confirmed-tx` or `fire-and-forget` |
+| `UPDATE_INTERVAL_MS` | No | `5000` | Update interval (default 5 sec, applies only when `PRICE_FETCHING_METHOD` = "polling") |
 | `GAS_PRICE` | No | `0.025uakt` | Gas price |
 | `DENOM` | No | `uakt` | Token denomination |
 | `HEALTHCHECK_PORT` | No | 3000 | healthcheck server port |

@@ -14,9 +14,8 @@
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { DirectSecp256k1HdWallet, DirectSecp256k1Wallet, type OfflineDirectSigner } from "@cosmjs/proto-signing";
 import { GasPrice } from "@cosmjs/stargate";
-import { priceUpdateCounter, blockchainPriceStaleness } from "./metrics.ts";
+import { blockchainPriceStaleness, priceUpdateCounter } from "./metrics.ts";
 import { latestValue } from "./price-stream/latest-value/latest-value.ts";
-import { PriceUpdateConfirmed } from "./price-update/price-update-confirmed/price-update-confirmed.ts";
 import type { Logger, PriceProducerFactory, PriceUpdate, PriceUpdater, PythPriceData } from "./types.ts";
 import {
     sanitizeErrorMessage,
@@ -67,6 +66,11 @@ export interface HermesConfig {
      * This allows for different implementations of price fetching logic (e.g. polling, SSE).
      */
     priceProducerFactory: PriceProducerFactory;
+
+    /**
+     * Factory function to create a PriceUpdater instance for submitting price updates to the chain.
+     */
+    priceUpdaterFactory: (client: SigningCosmWasmClient, signer: OfflineDirectSigner) => PriceUpdater;
     /**
      * Optional logger for informational messages. Should implement log, error, and warn methods.
      */
@@ -157,7 +161,9 @@ export class HermesClient {
     #cosmClient?: SigningCosmWasmClient;
     #wallet?: OfflineDirectSigner;
     #senderAddress?: string;
-    readonly #config: Required<Omit<HermesConfig, "fetch" | "logger" | "connectWithSigner">>;
+    readonly #config: Required<Omit<HermesConfig, "fetch" | "logger" | "connectWithSigner" | "gasPrice">> & {
+        gasPrice: GasPrice;
+    };
     #isRunning = false;
     #insufficientBalanceCooldownUntil: number | null = null;
     #lastPriceReceivedAt?: string;
@@ -186,7 +192,7 @@ export class HermesClient {
         this.#config = {
             ...config,
             denom: config.denom ?? "uakt",
-            gasPrice: config.gasPrice ?? "0.025uakt",
+            gasPrice: GasPrice.fromString(config.gasPrice ?? "0.025uakt"),
             unsafeAllowInsecureEndpoints,
             priceDeviationTolerance: config.priceDeviationTolerance ?? DEFAULT_PRICE_DEVIATION_TOLERANCE,
             insufficientBalanceRetryDelayMs: config.insufficientBalanceRetryDelayMs ?? 60_000,
@@ -212,7 +218,7 @@ export class HermesClient {
                 this.#config.rpcEndpoint,
                 this.#wallet,
                 {
-                    gasPrice: GasPrice.fromString(this.#config.gasPrice),
+                    gasPrice: this.#config.gasPrice,
                 },
             );
 
@@ -442,12 +448,13 @@ export class HermesClient {
 
             this.#logger.log("Submitting VAA to Pyth contract...");
             this.#logger.log(`  Wormhole contract: ${config.wormhole_contract}`);
-            this.#priceUpdater ??= new PriceUpdateConfirmed(this.#getCosmClient());
+            this.#priceUpdater ??= this.#config.priceUpdaterFactory(this.#getCosmClient(), this.#wallet!);
             const result = await this.#priceUpdater.updatePrice(priceUpdate, {
                 senderAddress: this.#senderAddress,
                 contractAddress: this.#config.contractAddress,
                 denom: this.#config.denom,
                 updateFee: config.update_fee,
+                gasPrice: this.#config.gasPrice,
             });
 
             const price = priceUpdate.priceData.price;
