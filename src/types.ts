@@ -1,3 +1,5 @@
+import type { GasPrice } from "@cosmjs/stargate";
+
 // Pyth price data from Hermes API
 export interface PythPriceData {
     id: string;
@@ -50,6 +52,7 @@ export interface PriceUpdateOptions {
     contractAddress: string;
     denom: string;
     updateFee: string;
+    gasPrice: GasPrice;
 }
 
 export interface UpdatePriceFeedMsg {
