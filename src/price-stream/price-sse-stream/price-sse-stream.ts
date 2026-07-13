@@ -29,6 +29,9 @@ export async function *priceSSEStream(options: PriceSSEStreamOptions): AsyncGene
             if (lastEventId) {
                 headers["Last-Event-ID"] = String(lastEventId);
             }
+            if (options.authenticationToken) {
+                headers["Authorization"] = `Bearer ${options.authenticationToken}`;
+            }
 
             options.logger?.log(`Connecting to Hermes price stream at ${options.baseUrl}${lastEventId ? ` (Last-Event-ID: ${lastEventId})` : ""}...`);
             const timeoutSignal = AbortSignal.timeout(10_000);
@@ -91,6 +94,7 @@ export async function *priceSSEStream(options: PriceSSEStreamOptions): AsyncGene
 
 export interface PriceSSEStreamOptions extends PriceProducerFactoryOptions {
     baseUrl: string;
+    authenticationToken?: string;
     unsafeAllowInsecureEndpoints?: boolean;
     fetch?: typeof globalThis.fetch;
     delay?: typeof setTimeout;

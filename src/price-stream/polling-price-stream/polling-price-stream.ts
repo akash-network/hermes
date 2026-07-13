@@ -21,6 +21,10 @@ export async function *pollPriceStream(options: PollPriceStreamOptions): AsyncGe
         encoding: "base64",
     });
     const fetch = options.fetch ?? createFetch();
+    const headers: Record<string, string> = {};
+    if (options.authenticationToken) {
+        headers["Authorization"] = `Bearer ${options.authenticationToken}`;
+    }
 
     let response: Response | undefined;
     let status = 0;
@@ -32,6 +36,7 @@ export async function *pollPriceStream(options: PollPriceStreamOptions): AsyncGe
             const timeoutSignal = AbortSignal.timeout(10_000);
             response = await fetch(`${options.baseUrl}/v2/updates/price/latest?${params.toString()}`, {
                 signal: options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal,
+                headers,
             });
             status = response.status;
         } catch (error) {
@@ -77,6 +82,7 @@ export async function *pollPriceStream(options: PollPriceStreamOptions): AsyncGe
 
 export interface PollPriceStreamOptions extends PriceProducerFactoryOptions {
     baseUrl: string;
+    authenticationToken?: string;
     pollingIntervalMs: number;
     unsafeAllowInsecureEndpoints?: boolean;
     fetch?: typeof globalThis.fetch;
@@ -96,14 +102,14 @@ function createFetch() {
             const parsed = new URL(url);
             const isHttps = parsed.protocol === "https:";
             const mod = isHttps ? https : http;
+            const headers = new Headers(options?.headers);
+            headers.set("accept", "application/json");
             const requestOptions: https.RequestOptions = {
                 method: "GET",
                 hostname: parsed.hostname,
                 port: parsed.port || (isHttps ? 443 : 80),
                 path: `${parsed.pathname}${parsed.search}`,
-                headers: {
-                    accept: "application/json",
-                },
+                headers: Object.fromEntries(headers.entries()),
                 agent: isHttps ? agent : undefined,
             };
 

@@ -53,6 +53,28 @@ describe("pollPriceStream", () => {
         expect(calledUrl).toContain("encoding=base64");
     });
 
+    it("sends Authorization header when authenticationToken is provided", async () => {
+        const fetchMock = vi.fn().mockResolvedValueOnce(mockFetchResponse(createHermesResponse()));
+        const options = createOptions({ fetch: fetchMock, authenticationToken: "secret-token" });
+
+        const gen = pollPriceStream(options);
+        await gen.next();
+
+        const calledHeaders = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+        expect(calledHeaders["Authorization"]).toBe("Bearer secret-token");
+    });
+
+    it("does not send Authorization header when authenticationToken is absent", async () => {
+        const fetchMock = vi.fn().mockResolvedValueOnce(mockFetchResponse(createHermesResponse()));
+        const options = createOptions({ fetch: fetchMock });
+
+        const gen = pollPriceStream(options);
+        await gen.next();
+
+        const calledHeaders = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+        expect(calledHeaders["Authorization"]).toBeUndefined();
+    });
+
     it("logs error and retries on non-ok response", async () => {
         const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
         const data = createHermesResponse();
