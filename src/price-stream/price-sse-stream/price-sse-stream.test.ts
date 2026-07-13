@@ -253,6 +253,64 @@ describe(priceSSEStream.name, () => {
         expect(firstCallHeaders["Last-Event-ID"]).toBeUndefined();
     });
 
+    it("sends Authorization header when authenticationToken is provided", async () => {
+        const data = createHermesResponse();
+        const fetchMock = vi.fn().mockResolvedValueOnce(mockFetchResponse());
+        const options = createOptions({
+            fetch: fetchMock,
+            authenticationToken: "secret-token",
+            events: mockEvents([
+                { data: JSON.stringify(data), id: "1" },
+            ]),
+        });
+
+        const gen = priceSSEStream(options);
+        await gen.next();
+
+        const calledHeaders = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+        expect(calledHeaders["Authorization"]).toBe("Bearer secret-token");
+    });
+
+    it("does not send Authorization header when authenticationToken is absent", async () => {
+        const data = createHermesResponse();
+        const fetchMock = vi.fn().mockResolvedValueOnce(mockFetchResponse());
+        const options = createOptions({
+            fetch: fetchMock,
+            events: mockEvents([
+                { data: JSON.stringify(data), id: "1" },
+            ]),
+        });
+
+        const gen = priceSSEStream(options);
+        await gen.next();
+
+        const calledHeaders = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+        expect(calledHeaders["Authorization"]).toBeUndefined();
+    });
+
+    it("sends both Last-Event-ID and Authorization headers on reconnect", async () => {
+        const data = createHermesResponse();
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(mockFetchResponse())
+            .mockResolvedValueOnce(mockFetchResponse());
+        const eventsFn = vi.fn()
+            .mockReturnValueOnce(toAsyncGenerator([
+                { data: JSON.stringify(data), id: "42" },
+            ]))
+            .mockReturnValueOnce(toAsyncGenerator([
+                { data: JSON.stringify(data), id: "43" },
+            ]));
+        const options = createOptions({ fetch: fetchMock, authenticationToken: "secret-token", events: eventsFn });
+
+        const gen = priceSSEStream(options);
+        await gen.next();
+        await gen.next();
+
+        const secondCallHeaders = fetchMock.mock.calls[1][1]?.headers as Record<string, string>;
+        expect(secondCallHeaders["Last-Event-ID"]).toBe("42");
+        expect(secondCallHeaders["Authorization"]).toBe("Bearer secret-token");
+    });
+
     it("updates retry delay when event contains retry directive", async () => {
         const logger = createLogger();
         const data = createHermesResponse();

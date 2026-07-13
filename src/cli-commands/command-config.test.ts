@@ -1,5 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { parseConfig } from "./command-config.ts";
+import { pollPriceStream } from "../price-stream/polling-price-stream/polling-price-stream.ts";
+import { priceSSEStream } from "../price-stream/price-sse-stream/price-sse-stream.ts";
+
+vi.mock("../price-stream/polling-price-stream/polling-price-stream.ts", () => ({
+    pollPriceStream: vi.fn(),
+}));
+vi.mock("../price-stream/price-sse-stream/price-sse-stream.ts", () => ({
+    priceSSEStream: vi.fn(),
+}));
 
 describe("parseConfig", () => {
     it("returns error when CONTRACT_ADDRESS is missing", () => {
@@ -206,6 +215,59 @@ describe("parseConfig", () => {
             const result = parseConfig(validEnv({ INSUFFICIENT_BALANCE_RETRY_DELAY_MS: "-1" }));
 
             expect(result.ok).toBe(false);
+        });
+    });
+
+    describe("HERMES_API_KEY", () => {
+        beforeEach(() => {
+            vi.clearAllMocks();
+        });
+
+        it("is optional and config parses when it is not provided", () => {
+            const result = parseConfig(validEnv());
+
+            expect(result.ok).toBe(true);
+            expect((result as Extract<typeof result, { ok: true }>).value.rawConfig.HERMES_API_KEY).toBeUndefined();
+        });
+
+        it("parses config when HERMES_API_KEY is provided", () => {
+            const result = parseConfig(validEnv({ HERMES_API_KEY: "secret-token" }));
+
+            expect(result.ok).toBe(true);
+            expect((result as Extract<typeof result, { ok: true }>).value.rawConfig.HERMES_API_KEY).toBe("secret-token");
+        });
+
+        it("passes authenticationToken to pollPriceStream when method is polling", () => {
+            const result = parseConfig(validEnv({ HERMES_API_KEY: "secret-token", PRICE_FETCHING_METHOD: "polling" }));
+
+            expect(result.ok).toBe(true);
+            (result as Extract<typeof result, { ok: true }>).value.priceProducerFactory({ priceFeedId: "abc123" });
+
+            expect(pollPriceStream).toHaveBeenCalledWith(
+                expect.objectContaining({ authenticationToken: "secret-token" }),
+            );
+        });
+
+        it("passes authenticationToken to priceSSEStream when method is sse", () => {
+            const result = parseConfig(validEnv({ HERMES_API_KEY: "secret-token", PRICE_FETCHING_METHOD: "sse" }));
+
+            expect(result.ok).toBe(true);
+            (result as Extract<typeof result, { ok: true }>).value.priceProducerFactory({ priceFeedId: "abc123" });
+
+            expect(priceSSEStream).toHaveBeenCalledWith(
+                expect.objectContaining({ authenticationToken: "secret-token" }),
+            );
+        });
+
+        it("passes undefined authenticationToken when HERMES_API_KEY is not set", () => {
+            const result = parseConfig(validEnv());
+
+            expect(result.ok).toBe(true);
+            (result as Extract<typeof result, { ok: true }>).value.priceProducerFactory({ priceFeedId: "abc123" });
+
+            expect(pollPriceStream).toHaveBeenCalledWith(
+                expect.objectContaining({ authenticationToken: undefined }),
+            );
         });
     });
 

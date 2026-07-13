@@ -171,6 +171,7 @@ akash query wasm contract-state smart $HC_CONTRACT_ADDRESS '{"get_config":{}}'
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `HC_RPC_ENDPOINT` | Yes | - | Akash RPC endpoint |
+| `HC_HERMES_API_KEY` | No | - | optional hermes api key. After 31 Jul 2026 it will become required |
 | `HC_CONTRACT_ADDRESS` | Yes | - | Oracle contract address |
 | `HC_WALLET_SECRET` | Yes | - | Either `privateKey:<private key in hex format>` or `mnemonic:<12/24 words>` |
 | `HC_HERMES_ENDPOINT` | No | `https://hermes.pyth.network` | Pyth Hermes API |

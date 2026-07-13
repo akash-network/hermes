@@ -16,6 +16,7 @@ export interface CommandConfig extends HermesConfig {
 const configSchema = z.object({
     RPC_ENDPOINT: z.url().default("https://rpc.akashnet.net:443"),
     HERMES_ENDPOINT: z.url().default("https://hermes.pyth.network"),
+    HERMES_API_KEY: z.string().optional(),
     CONTRACT_ADDRESS: z.string().nonempty().superRefine(propagateError(validateContractAddress)),
     WALLET_SECRET: z.string()
         .regex(/^(mnemonic|privateKey):.+$/, { message: 'must be in the format "mnemonic:<12/24 word phrase>" or "privateKey:<hex format>"' })
@@ -81,6 +82,7 @@ export function parseConfig(config: Record<string, string | undefined>): ParseCo
                     ...options,
                     unsafeAllowInsecureEndpoints,
                     baseUrl: result.data.HERMES_ENDPOINT,
+                    authenticationToken: result.data.HERMES_API_KEY,
                 });
             }
             return pollPriceStream({
@@ -88,6 +90,7 @@ export function parseConfig(config: Record<string, string | undefined>): ParseCo
                 unsafeAllowInsecureEndpoints,
                 baseUrl: result.data.HERMES_ENDPOINT,
                 pollingIntervalMs: result.data.UPDATE_INTERVAL_MS,
+                authenticationToken: result.data.HERMES_API_KEY,
             });
         },
         createHermesClient: (cfg: HermesConfig) => HermesClient.connect(cfg),
