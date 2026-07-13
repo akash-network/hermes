@@ -34,9 +34,9 @@ cp .env.example .env
 
 Edit `.env`:
 ```bash
-RPC_ENDPOINT=https://rpc.akashnet.net:443
-CONTRACT_ADDRESS=akash1your_contract_address
-MNEMONIC="your twelve or twenty four word mnemonic"
+HC_RPC_ENDPOINT=https://rpc.akashnet.net:443
+HC_CONTRACT_ADDRESS=akash1your_contract_address
+HC_MNEMONIC="your twelve or twenty four word mnemonic"
 ```
 
 ### 3. Run
@@ -158,10 +158,10 @@ sudo journalctl -u hermes-client -f
 
 ```bash
 # Check current price
-akash query wasm contract-state smart $CONTRACT_ADDRESS '{"get_price":{}}'
+akash query wasm contract-state smart $HC_CONTRACT_ADDRESS '{"get_price":{}}'
 
 # Check configuration
-akash query wasm contract-state smart $CONTRACT_ADDRESS '{"get_config":{}}'
+akash query wasm contract-state smart $HC_CONTRACT_ADDRESS '{"get_config":{}}'
 ```
 
 ## ⚙️ Configuration
@@ -170,18 +170,18 @@ akash query wasm contract-state smart $CONTRACT_ADDRESS '{"get_config":{}}'
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `RPC_ENDPOINT` | Yes | - | Akash RPC endpoint |
-| `CONTRACT_ADDRESS` | Yes | - | Oracle contract address |
-| `WALLET_SECRET` | Yes | - | Either `privateKey:<private key in hex format>` or `mnemonic:<12/24 words>` |
-| `HERMES_ENDPOINT` | No | `https://hermes.pyth.network` | Pyth Hermes API |
-| `PRICE_DEVIATION_TOLERANCE` | No | 0 | absolute or percentage value for price deviations which should be ignored (e.g., `100` or `10%`) |
-| `PRICE_FETCHING_METHOD` | No | polling | `polling` or `sse` |
-| `UPDATE_INTERVAL_MS` | No | `5000` | Update interval (default 5 sec) |
-| `GAS_PRICE` | No | `0.025uakt` | Gas price |
-| `DENOM` | No | `uakt` | Token denomination |
-| `HEALTHCHECK_PORT` | No | 3000 | healthcheck server port |
+| `HC_RPC_ENDPOINT` | Yes | - | Akash RPC endpoint |
+| `HC_CONTRACT_ADDRESS` | Yes | - | Oracle contract address |
+| `HC_WALLET_SECRET` | Yes | - | Either `privateKey:<private key in hex format>` or `mnemonic:<12/24 words>` |
+| `HC_HERMES_ENDPOINT` | No | `https://hermes.pyth.network` | Pyth Hermes API |
+| `HC_PRICE_DEVIATION_TOLERANCE` | No | 0 | absolute or percentage value for price deviations which should be ignored (e.g., `100` or `10%`) |
+| `HC_PRICE_FETCHING_METHOD` | No | polling | `polling` or `sse` |
+| `HC_UPDATE_INTERVAL_MS` | No | `5000` | Update interval (default 5 sec) |
+| `HC_GAS_PRICE` | No | `0.025uakt` | Gas price |
+| `HC_DENOM` | No | `uakt` | Token denomination |
+| `HC_HEALTHCHECK_PORT` | No | 3000 | healthcheck server port |
+| `HC_SMART_CONTRACT_CONFIG_CACHE_TTL_MS` | No | 3600000 (1h) | smart contract config cache ttl in milliseconds |
 | `OTEL_RESOURCE_ATTRIBUTES` | No | <empty> | additional attributes attached to all metrics (e.g., `service.name=hermes,service.version=1.1.0,deployment.environment=production`) |
-| `SMART_CONTRACT_CONFIG_CACHE_TTL_MS` | No | 3600000 (1h) | smart contract config cache ttl in milliseconds |
 
 ### Instrumentation
 
@@ -208,9 +208,9 @@ node --env-file=.env --import ./dist/instrumentation.js dist/cli.js daemon
 
 Change update interval in `.env`:
 ```bash
-UPDATE_INTERVAL_MS=300000   # 5 minutes (default)
-UPDATE_INTERVAL_MS=180000   # 3 minutes
-UPDATE_INTERVAL_MS=600000   # 10 minutes
+HC_UPDATE_INTERVAL_MS=300000   # 5 minutes (default)
+HC_UPDATE_INTERVAL_MS=180000   # 3 minutes
+HC_UPDATE_INTERVAL_MS=600000   # 10 minutes
 ```
 
 ## 💡 How It Works
@@ -266,8 +266,8 @@ Monthly cost:       8,640 × 4,750 uakt = 41.04 AKT
 
 Increase update interval to reduce costs:
 ```bash
-UPDATE_INTERVAL_MS=600000   # 10 min → 50% cost savings
-UPDATE_INTERVAL_MS=900000   # 15 min → 67% cost savings
+HC_UPDATE_INTERVAL_MS=600000   # 10 min → 50% cost savings
+HC_UPDATE_INTERVAL_MS=900000   # 15 min → 67% cost savings
 ```
 
 ## 🔒 Security
@@ -318,7 +318,7 @@ akash tx bank send <FROM> <ORACLE_ADDRESS> 100000000uakt --gas auto
 curl "https://hermes.pyth.network/v2/updates/price/latest?ids=<PRICE_FEED_ID>"
 
 # Check price feed ID
-akash query wasm contract-state smart $CONTRACT_ADDRESS '{"get_price_feed_id":{}}'
+akash query wasm contract-state smart $HC_CONTRACT_ADDRESS '{"get_price_feed_id":{}}'
 ```
 
 **"Price already up to date"**
@@ -337,13 +337,13 @@ npm run cli:daemon
 
 ```bash
 # Test RPC
-curl $RPC_ENDPOINT/status
+curl $HC_RPC_ENDPOINT/status
 
 # Test Hermes
 curl "https://hermes.pyth.network/api/latest_price_feeds?ids[]=<FEED_ID>"
 
 # Test contract
-akash query wasm contract-state smart $CONTRACT_ADDRESS '{"get_config":{}}'
+akash query wasm contract-state smart $HC_CONTRACT_ADDRESS '{"get_config":{}}'
 ```
 
 ## 📚 Documentation

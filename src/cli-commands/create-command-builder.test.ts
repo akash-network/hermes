@@ -12,7 +12,7 @@ describe("createCommandBuilder", () => {
 
         expect(handler).toHaveBeenCalledWith(
             expect.objectContaining({
-                contractAddress: mockProcess.env.CONTRACT_ADDRESS,
+                contractAddress: mockProcess.env.HC_CONTRACT_ADDRESS,
                 walletSecret: {
                     type: "mnemonic",
                     value: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
@@ -24,8 +24,23 @@ describe("createCommandBuilder", () => {
 
     it("exits with code 1 and logs error when config is invalid", async () => {
         const { command, mockProcess, logger } = setup({
-            CONTRACT_ADDRESS: "",
-            WALLET_SECRET: "",
+            HC_CONTRACT_ADDRESS: "",
+            HC_WALLET_SECRET: "",
+        });
+        const handler = vi.fn();
+        const wrappedCommand = command(handler);
+
+        await wrappedCommand(fakeCommand("test"));
+
+        expect(handler).not.toHaveBeenCalled();
+        expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("Configuration error:"));
+        expect(mockProcess.exit).toHaveBeenCalledWith(1);
+    });
+
+    it("ignores env vars without the HC_ prefix", async () => {
+        const { command, mockProcess, logger } = setup({
+            CONTRACT_ADDRESS: "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
+            WALLET_SECRET: "mnemonic:abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         });
         const handler = vi.fn();
         const wrappedCommand = command(handler);
@@ -128,8 +143,8 @@ function setup(env?: Record<string, string>) {
     const logger = mock<Console>();
     const mockProcess = Object.assign(new EventEmitter(), {
         env: env ?? {
-            CONTRACT_ADDRESS: "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
-            WALLET_SECRET: "mnemonic:abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+            HC_CONTRACT_ADDRESS: "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
+            HC_WALLET_SECRET: "mnemonic:abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         },
         exit: vi.fn(),
     }) as unknown as CreateCommandBuilderOptions["process"] & EventEmitter;
