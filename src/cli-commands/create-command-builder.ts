@@ -4,7 +4,10 @@ export const createCommandBuilder = ({ process, console }: CreateCommandBuilderO
     return function command<T extends unknown[]>(fn: (config: CommandConfig, ...args: T) => Promise<void>) {
         return async (...args: [...T, Command]) => {
             const command = args.pop() as Command;
-            const result = parseConfig(process.env);
+            const result = parseConfig({
+                ...pickPrefixedKeys(process.env, "HC_"),
+                NODE_ENV: process.env.NODE_ENV,
+            });
 
             if (result.ok === false) {
                 console.error(`Configuration error:\n${result.error}`);
@@ -52,4 +55,14 @@ export interface CreateCommandBuilderOptions {
 
 interface Command {
     name: () => string;
+}
+
+function pickPrefixedKeys(obj: Record<string, string | undefined>, prefix: string): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const [key, value] of Object.entries(obj)) {
+        if (key.startsWith(prefix) && value !== undefined) {
+            result[key.slice(prefix.length)] = value;
+        }
+    }
+    return result;
 }

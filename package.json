@@ -9,7 +9,7 @@
     "scripts": {
         "build": "tsc",
         "start": "node dist/cli.js daemon",
-        "dev": "NODE_ENV=development node --experimental-strip-types --watch src/cli.ts daemon",
+        "dev": "NODE_ENV=development node --watch src/cli.ts daemon",
         "clean": "rm -rf dist",
         "cli": "node --experimental-strip-types src/cli.ts",
         "cli:update": "npm run cli -- update",
