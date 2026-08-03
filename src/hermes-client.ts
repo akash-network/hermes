@@ -15,7 +15,7 @@ import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import { DirectSecp256k1HdWallet, DirectSecp256k1Wallet, type OfflineDirectSigner } from "@cosmjs/proto-signing";
 import { GasPrice } from "@cosmjs/stargate";
 import { priceUpdateCounter, blockchainPriceStaleness } from "./metrics.ts";
-import { latestValue } from "./price-stream/latest-value/latest-value.ts";
+import { latestValue } from "./lib/generators/latest-value/latest-value.ts";
 import { PriceUpdateConfirmed } from "./price-update/price-update-confirmed/price-update-confirmed.ts";
 import type { Logger, PriceProducerFactory, PriceUpdate, PriceUpdater, PythPriceData } from "./types.ts";
 import {
@@ -555,34 +555,37 @@ export class HermesClient {
             });
             const priceUpdates = latestValue<PriceUpdate>({ signal });
             const consumePrices = async () => {
-                for await (const priceUpdate of priceStream) {
-                    priceUpdates.set(priceUpdate);
+                try {
+                    for await (const priceUpdate of priceStream) {
+                        priceUpdates.set(priceUpdate);
 
-                    const price = priceUpdate.priceData.price;
-                    this.#logger?.log(
-                        `Received price from Hermes: ${price.price} (expo: ${price.expo})`,
-                    );
-                    this.#logger?.log(
-                        `  Confidence: ${price.conf}, Publish time: ${price.publish_time}`,
-                    );
-                    this.#logger?.log(
-                        `  VAA size: ${priceUpdate.vaa.length} bytes (base64)`,
-                    );
-                    this.#lastPriceReceivedAt = new Date().toISOString();
-                }
-                controller.abort();
-            };
-            const updatePrices = async () => {
-                for await (const priceUpdate of priceUpdates) {
-                    try {
-                        await this.#updatePrice(priceUpdate);
-                    } catch (error) {
-                        this.#logger.error("Error in scheduled update:", error);
+                        const price = priceUpdate.priceData.price;
+                        this.#logger?.log(
+                            `Received price from Hermes: ${price.price} (expo: ${price.expo})`,
+                        );
+                        this.#logger?.log(
+                            `  Confidence: ${price.conf}, Publish time: ${price.publish_time}`,
+                        );
+                        this.#logger?.log(
+                            `  VAA size: ${priceUpdate.vaa.length} bytes (base64)`,
+                        );
+                        this.#lastPriceReceivedAt = new Date().toISOString();
                     }
+                    priceUpdates.close();
+                } catch (error) {
+                    priceUpdates.fail(error);
                 }
             };
 
-            await Promise.all([consumePrices(), updatePrices()]);
+            consumePrices().catch(() => undefined);
+
+            for await (const priceUpdate of priceUpdates) {
+                try {
+                    await this.#updatePrice(priceUpdate);
+                } catch (error) {
+                    this.#logger.error("Error in scheduled update:", error);
+                }
+            }
         } catch (error) {
             controller.abort();
             const safeMessage = sanitizeErrorMessage(error, "Failed to start Hermes client");

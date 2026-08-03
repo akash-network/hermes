@@ -876,32 +876,47 @@ describe(HermesClient.name, () => {
             expect(status.lastPriceUpdateReceivedAt).toBeUndefined();
         });
 
-        it("processes latest price update from stream when updates arrive faster than consumption", async () => {
-            const priceUpdate1 = buildPriceFeed("10000", -2, 2000);
-            const priceUpdate2 = buildPriceFeed("10100", -2, 3000);
+        it("drops updates that arrive while a price update is in flight, keeping the latest", async () => {
+            const priceUpdate1 = buildPriceFeed("10000", -2, 2000, "vaa-1");
+            const priceUpdate2 = buildPriceFeed("10100", -2, 3000, "vaa-2");
+            const priceUpdate3 = buildPriceFeed("10200", -2, 4000, "vaa-3");
+            // Hold the first on-chain update open so updates 2 and 3 both arrive while it is in flight.
+            const { promise: firstUpdateInFlight, resolve: releaseFirstUpdate } = Promise.withResolvers<void>();
+            const { promise: firstUpdateStarted, resolve: firstUpdateReached } = Promise.withResolvers<void>();
             const factory = vi.fn(async function* () {
                 yield priceUpdate1;
+                await firstUpdateStarted;
                 yield priceUpdate2;
+                yield priceUpdate3;
+                releaseFirstUpdate();
             });
             const { client, stargateClient } = setup({ priceProducerFactory: factory as unknown as PriceProducerFactory });
 
             stargateClient.queryContractSmart
                 .mockResolvedValueOnce({ price_feed_id: "test-feed-id", update_fee: "1", wormhole_contract: "akash1wormhole", admin: "akash1admin", default_denom: "uakt", default_base_denom: "akt", data_sources: [] })
                 .mockResolvedValueOnce({ price: "9000", conf: "10", expo: -2, publish_time: 1000 });
-            stargateClient.execute.mockResolvedValue({
+            const receipt = {
                 transactionHash: "TX",
                 gasUsed: 500000n,
                 gasWanted: 600000n,
                 height: 100,
                 events: [],
                 logs: [],
-            });
+            };
+            stargateClient.execute
+                .mockImplementationOnce(async () => {
+                    firstUpdateReached();
+                    await firstUpdateInFlight;
+                    return receipt;
+                })
+                .mockResolvedValue(receipt);
 
             const ac = new AbortController();
             await client.start({ signal: ac.signal });
             ac.abort();
 
-            expect(stargateClient.execute).toHaveBeenCalledTimes(1);
+            const submittedVaas = stargateClient.execute.mock.calls.map((call) => (call[2] as { update_price_feed: { vaa: string } }).update_price_feed.vaa);
+            expect(submittedVaas).toEqual([btoa("vaa-1"), btoa("vaa-3")]);
         });
 
         it("enters cooldown on insufficient balance error and retries after delay", async () => {
@@ -1046,14 +1061,14 @@ function setup(input?: Partial<HermesConfig> & {
     return { client, priceUpdate, priceProducerFactory, logger, stargateClient };
 }
 
-function buildPriceFeed(price: string, expo: number, publishTime: number): PriceUpdate {
+function buildPriceFeed(price: string, expo: number, publishTime: number, vaa = "vaa-data"): PriceUpdate {
     return {
         priceData: {
             id: "test-id",
             price: { price, conf: "10", expo, publish_time: publishTime },
             ema_price: { price, conf: "10", expo, publish_time: publishTime },
         },
-        vaa: btoa("vaa-data"),
+        vaa: btoa(vaa),
     };
 }
 
