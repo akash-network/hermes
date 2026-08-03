@@ -1,12 +1,12 @@
 export interface Signal<T> {
-    set(value: T): void;
-    close(): void;
-    fail(error: unknown): void;
-    [Symbol.asyncIterator](): AsyncIterableIterator<T>;
+  set(value: T): void;
+  close(): void;
+  fail(error: unknown): void;
+  [Symbol.asyncIterator](): AsyncIterableIterator<T>;
 }
 
 export interface SignalOptions {
-    signal?: AbortSignal;
+  signal?: AbortSignal;
 }
 
 /**
@@ -22,58 +22,58 @@ export interface SignalOptions {
  * aborted signal ends iteration promptly.
  */
 export function latestValue<T>(options?: SignalOptions): Signal<T> {
-    let slot: { value: T } | undefined;
-    let closed = false;
-    let failure: { error: unknown } | undefined;
-    let notify: (() => void) | null = null;
+  let slot: { value: T } | undefined;
+  let closed = false;
+  let failure: { error: unknown } | undefined;
+  let notify: (() => void) | null = null;
 
-    const wake = () => {
-        notify?.();
-        notify = null;
-    };
+  const wake = () => {
+    notify?.();
+    notify = null;
+  };
 
-    return {
-        set(value) {
-            if (closed) return;
-            slot = { value };
-            wake();
-        },
-        close() {
-            closed = true;
-            wake();
-        },
-        fail(error) {
-            if (closed) return;
-            failure = { error };
-            closed = true;
-            wake();
-        },
-        async *[Symbol.asyncIterator]() {
-            const { signal } = options ?? {};
-            signal?.addEventListener("abort", wake, { once: true });
-            try {
-                while (true) {
-                    while (!slot && !closed && !signal?.aborted) {
-                        const { promise, resolve } = Promise.withResolvers<void>();
-                        notify = resolve;
-                        await promise;
-                    }
+  return {
+    set(value) {
+      if (closed) return;
+      slot = { value };
+      wake();
+    },
+    close() {
+      closed = true;
+      wake();
+    },
+    fail(error) {
+      if (closed) return;
+      failure = { error };
+      closed = true;
+      wake();
+    },
+    async *[Symbol.asyncIterator]() {
+      const { signal } = options ?? {};
+      signal?.addEventListener("abort", wake, { once: true });
+      try {
+        while (true) {
+          while (!slot && !closed && !signal?.aborted) {
+            const { promise, resolve } = Promise.withResolvers<void>();
+            notify = resolve;
+            await promise;
+          }
 
-                    if (signal?.aborted) return;
+          if (signal?.aborted) return;
 
-                    if (slot) {
-                        const { value } = slot;
-                        slot = undefined;
-                        yield value;
-                        continue;
-                    }
+          if (slot) {
+            const { value } = slot;
+            slot = undefined;
+            yield value;
+            continue;
+          }
 
-                    if (failure) throw failure.error;
-                    return;
-                }
-            } finally {
-                signal?.removeEventListener("abort", wake);
-            }
-        },
-    };
+          if (failure) throw failure.error;
+          return;
+        }
+      } finally {
+        signal?.removeEventListener("abort", wake);
+      }
+    },
+  };
 }

@@ -9,46 +9,46 @@ import { secp256k1 } from "@noble/curves/secp256k1";
  * Prevents SSRF by rejecting non-HTTPS schemes and private/internal addresses.
  */
 export function validateEndpointUrl(url: string, fieldName: string, onlySecureEndpoints = true): string {
-    let parsed: URL;
-    try {
-        parsed = new URL(url);
-    } catch {
-        throw new Error(`Invalid ${fieldName}: not a valid URL`);
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid ${fieldName}: not a valid URL`);
+  }
+
+  if (onlySecureEndpoints && parsed.protocol !== "https:") {
+    throw new Error(`Invalid ${fieldName}: only HTTPS endpoints are allowed`);
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(`Invalid ${fieldName}: only HTTP/HTTPS endpoints are allowed`);
+  }
+
+  // When onlySecureEndpoints is enabled, block private/internal IP ranges to prevent SSRF
+  if (onlySecureEndpoints) {
+    const hostname = parsed.hostname.toLowerCase();
+    const blockedPatterns = [
+      /^localhost$/,
+      /^127\./,
+      /^10\./,
+      /^172\.(1[6-9]|2\d|3[01])\./,
+      /^192\.168\./,
+      /^0\./,
+      /^\[::1\]$/,
+      /^\[fd/,      // IPv6 private
+      /^\[fe80:/,   // IPv6 link-local
+      /^169\.254\./, // link-local
+      /\.local$/,
+    ];
+
+    for (const pattern of blockedPatterns) {
+      if (pattern.test(hostname)) {
+        throw new Error(`Invalid ${fieldName}: private or internal addresses are not allowed`);
+      }
     }
+  }
 
-    if (onlySecureEndpoints && parsed.protocol !== "https:") {
-        throw new Error(`Invalid ${fieldName}: only HTTPS endpoints are allowed`);
-    }
-
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-        throw new Error(`Invalid ${fieldName}: only HTTP/HTTPS endpoints are allowed`);
-    }
-
-    // When onlySecureEndpoints is enabled, block private/internal IP ranges to prevent SSRF
-    if (onlySecureEndpoints) {
-        const hostname = parsed.hostname.toLowerCase();
-        const blockedPatterns = [
-            /^localhost$/,
-            /^127\./,
-            /^10\./,
-            /^172\.(1[6-9]|2\d|3[01])\./,
-            /^192\.168\./,
-            /^0\./,
-            /^\[::1\]$/,
-            /^\[fd/,      // IPv6 private
-            /^\[fe80:/,   // IPv6 link-local
-            /^169\.254\./, // link-local
-            /\.local$/,
-        ];
-
-        for (const pattern of blockedPatterns) {
-            if (pattern.test(hostname)) {
-                throw new Error(`Invalid ${fieldName}: private or internal addresses are not allowed`);
-            }
-        }
-    }
-
-    return url;
+  return url;
 }
 
 /**
@@ -56,29 +56,29 @@ export function validateEndpointUrl(url: string, fieldName: string, onlySecureEn
  * Akash addresses are bech32 encoded with the "akash" prefix.
  */
 export function validateAkashAddress(address: string): string {
-    // Akash addresses: "akash1" prefix + 38 chars of bech32 data
-    const akashAddressRegex = /^akash1[a-z0-9]{38}$/;
-    if (!akashAddressRegex.test(address)) {
-        throw new Error("Invalid address format: must be a valid Akash address (akash1...)");
-    }
-    return address;
+  // Akash addresses: "akash1" prefix + 38 chars of bech32 data
+  const akashAddressRegex = /^akash1[a-z0-9]{38}$/;
+  if (!akashAddressRegex.test(address)) {
+    throw new Error("Invalid address format: must be a valid Akash address (akash1...)");
+  }
+  return address;
 }
 
 /**
  * Validate that a fee string is a valid non-negative integer (Uint256 representation).
  */
 export function validateFeeAmount(fee: string): string {
-    // Must be a non-negative integer string (Uint256 serialized as string in CosmWasm)
-    if (!/^\d+$/.test(fee)) {
-        throw new Error("Invalid fee: must be a non-negative integer string");
-    }
+  // Must be a non-negative integer string (Uint256 serialized as string in CosmWasm)
+  if (!/^\d+$/.test(fee)) {
+    throw new Error("Invalid fee: must be a non-negative integer string");
+  }
 
-    // Must not be excessively large (prevent abuse)
-    if (fee.length > 78) { // max Uint256 is 78 digits
-        throw new Error("Invalid fee: value exceeds maximum allowed");
-    }
+  // Must not be excessively large (prevent abuse)
+  if (fee.length > 78) { // max Uint256 is 78 digits
+    throw new Error("Invalid fee: value exceeds maximum allowed");
+  }
 
-    return fee;
+  return fee;
 }
 
 /**
@@ -90,19 +90,19 @@ const MNEMONIC_REGEX = /\b([a-z]{3,}\s+){11,23}[a-z]{3,}\b/g;
  * Strips stack traces, internal paths, and API response bodies.
  */
 export function sanitizeErrorMessage(error: unknown, context: string): string {
-    if (error instanceof Error) {
-        // Strip any file paths from the message
-        let msg = error.message;
-        msg = msg.replace(/\/[^\s:]+\.(ts|js|json)/g, "[path]");
-        // Strip any stack trace info
-        msg = msg.replace(/\n\s+at .+/g, "");
-        // Strip potential API response data
-        msg = msg.replace(/\{[^}]*"[^"]*"[^}]*\}/g, "[response data]");
-        // Strip possible mnemonic phrases (12 or 24 words)
-        msg = msg.replace(MNEMONIC_REGEX, "[mnemonic]");
-        return `${context}: ${msg}`;
-    }
-    return `${context}: an unexpected error occurred`;
+  if (error instanceof Error) {
+    // Strip any file paths from the message
+    let msg = error.message;
+    msg = msg.replace(/\/[^\s:]+\.(ts|js|json)/g, "[path]");
+    // Strip any stack trace info
+    msg = msg.replace(/\n\s+at .+/g, "");
+    // Strip potential API response data
+    msg = msg.replace(/\{[^}]*"[^"]*"[^}]*\}/g, "[response data]");
+    // Strip possible mnemonic phrases (12 or 24 words)
+    msg = msg.replace(MNEMONIC_REGEX, "[mnemonic]");
+    return `${context}: ${msg}`;
+  }
+  return `${context}: an unexpected error occurred`;
 }
 
 /**
@@ -110,40 +110,40 @@ export function sanitizeErrorMessage(error: unknown, context: string): string {
  * Only checks structure (word count), never returns or logs the mnemonic content.
  */
 export function validateMnemonicFormat(mnemonic: string): void {
-    const words = mnemonic.trim().split(/\s+/);
-    if (words.length !== 12 && words.length !== 24) {
-        throw new Error("Invalid mnemonic: must be 12 or 24 words");
+  const words = mnemonic.trim().split(/\s+/);
+  if (words.length !== 12 && words.length !== 24) {
+    throw new Error("Invalid mnemonic: must be 12 or 24 words");
+  }
+  // Basic check that each word is alphabetic (BIP39 words are lowercase alpha)
+  for (const word of words) {
+    if (!/^[a-z]+$/.test(word)) {
+      throw new Error("Invalid mnemonic: contains invalid characters");
     }
-    // Basic check that each word is alphabetic (BIP39 words are lowercase alpha)
-    for (const word of words) {
-        if (!/^[a-z]+$/.test(word)) {
-            throw new Error("Invalid mnemonic: contains invalid characters");
-        }
-    }
+  }
 }
 
 export function validateWalletSecret(secret: { type: "mnemonic" | "privateKey"; value: string }): void {
-    if (secret.type === "mnemonic") {
-        validateMnemonicFormat(secret.value);
-        return;
-    }
+  if (secret.type === "mnemonic") {
+    validateMnemonicFormat(secret.value);
+    return;
+  }
 
-    if (!/^[0-9a-fA-F]{64}$/.test(secret.value)) {
-        throw new Error("Invalid private key: must be a 64-character hexadecimal string");
-    }
+  if (!/^[0-9a-fA-F]{64}$/.test(secret.value)) {
+    throw new Error("Invalid private key: must be a 64-character hexadecimal string");
+  }
 
-    if (!secp256k1.utils.isValidSecretKey(Buffer.from(secret.value, "hex"))) {
-        throw new Error("Invalid private key: must be secp256k1 compliant");
-    }
+  if (!secp256k1.utils.isValidSecretKey(Buffer.from(secret.value, "hex"))) {
+    throw new Error("Invalid private key: must be secp256k1 compliant");
+  }
 }
 
 /**
  * Validate a contract address (Akash bech32 format, same as account but allows longer for contract addresses).
  */
 export function validateContractAddress(address: string): void {
-    // Contract addresses on Akash follow the same bech32 format
-    const contractAddressRegex = /^akash1[a-z0-9]{38,58}$/;
-    if (!contractAddressRegex.test(address)) {
-        throw new Error("Invalid contract address format: must be a valid Akash address");
-    }
+  // Contract addresses on Akash follow the same bech32 format
+  const contractAddressRegex = /^akash1[a-z0-9]{38,58}$/;
+  if (!contractAddressRegex.test(address)) {
+    throw new Error("Invalid contract address format: must be a valid Akash address");
+  }
 }

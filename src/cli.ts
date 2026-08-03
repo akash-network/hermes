@@ -30,57 +30,57 @@ const command = createCommandBuilder({ process, console });
 
 // Setup CLI
 program
-    .name("hermes-cli")
-    .description("CLI tool for managing Akash oracle updates")
-    .version("1.0.0");
+  .name("hermes-cli")
+  .description("CLI tool for managing Akash oracle updates")
+  .version("1.0.0");
 
 program
-    .command("update")
-    .description("Update oracle price once")
-    .action(command(updateCommand));
+  .command("update")
+  .description("Update oracle price once")
+  .action(command(updateCommand));
 
 program
-    .command("query")
-    .description("Query data from contract")
-    .option("--feed", "Query price feed with metadata")
-    .option("--config", "Query contract configuration")
-    .option("--oracle-params", "Query cached oracle parameters")
-    .action(command(queryCommand));
+  .command("query")
+  .description("Query data from contract")
+  .option("--feed", "Query price feed with metadata")
+  .option("--config", "Query contract configuration")
+  .option("--oracle-params", "Query cached oracle parameters")
+  .action(command(queryCommand));
 
 program
-    .command("status")
-    .description("Show contract and client status")
-    .action(command(statusCommand));
+  .command("status")
+  .description("Show contract and client status")
+  .action(command(statusCommand));
 
 program
-    .command("daemon")
-    .description("Run continuous updates (daemon mode)")
-    .action(command(daemonCommand));
+  .command("daemon")
+  .description("Run continuous updates (daemon mode)")
+  .action(command(daemonCommand));
 
 // Admin subcommands
 const admin = program
-    .command("admin")
-    .description("Admin operations (requires admin privileges)");
+  .command("admin")
+  .description("Admin operations (requires admin privileges)");
 
 admin
-    .command("refresh-params")
-    .description("Refresh cached oracle parameters from chain")
-    .action(command(adminRefreshParams));
+  .command("refresh-params")
+  .description("Refresh cached oracle parameters from chain")
+  .action(command(adminRefreshParams));
 
 admin
-    .command("update-fee <fee>")
-    .description("Update the price update fee (in uakt)")
-    .action(command(adminUpdateFee));
+  .command("update-fee <fee>")
+  .description("Update the price update fee (in uakt)")
+  .action(command(adminUpdateFee));
 
 admin
-    .command("transfer <address>")
-    .description("Transfer admin rights to new address")
-    .action(command(adminTransfer));
+  .command("transfer <address>")
+  .description("Transfer admin rights to new address")
+  .action(command(adminTransfer));
 
 // Parse arguments
 program.parse();
 
 // Show help if no command provided
 if (!process.argv.slice(2).length) {
-    program.outputHelp();
+  program.outputHelp();
 }
