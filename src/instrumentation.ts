@@ -6,18 +6,18 @@ import { containerDetector } from "@opentelemetry/resource-detector-container";
 import { prometheusExporter } from "./instrumentation/prometheus-exporter.ts";
 
 const sdk = new NodeSDK({
-    metricReader: prometheusExporter,
-    instrumentations: [
-        new RuntimeNodeInstrumentation({
-            monitoringPrecision: 5000,
-        }),
-    ],
-    resourceDetectors: [
-        containerDetector,
-        processDetector,
-        envDetector,
-        hostDetector,
-    ],
+  metricReader: prometheusExporter,
+  instrumentations: [
+    new RuntimeNodeInstrumentation({
+      monitoringPrecision: 5000,
+    }),
+  ],
+  resourceDetectors: [
+    containerDetector,
+    processDetector,
+    envDetector,
+    hostDetector,
+  ],
 });
 
 sdk.start();
