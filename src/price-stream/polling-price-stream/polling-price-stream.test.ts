@@ -226,6 +226,41 @@ describe("pollPriceStream", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("retries when the per-request timeout aborts the fetch", async () => {
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const data = createHermesResponse();
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(createAbortError())
+      .mockRejectedValueOnce(new DOMException("The operation timed out.", "TimeoutError"))
+      .mockResolvedValueOnce(mockFetchResponse(data));
+    const delayMock = mockDelay();
+
+    const options = createOptions({ fetch: fetchMock, logger, delay: delayMock });
+    const result = await pollPriceStream(options).next();
+
+    expect(result.done).toBe(false);
+    expect(result.value).toEqual({ priceData: data.parsed[0], vaa: data.binary.data[0] });
+    expect(logger.error).toHaveBeenCalledWith("Timed out fetching from Hermes after 10000 ms");
+    expect(delayDurations(delayMock)).toEqual([500, 1000]);
+  });
+
+  it("stops when the caller signal aborts the fetch", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockImplementation(() => {
+      controller.abort();
+      return Promise.reject(createAbortError());
+    });
+    const delayMock = mockDelay();
+
+    const options = createOptions({ fetch: fetchMock, delay: delayMock, signal: controller.signal });
+    const result = await pollPriceStream(options).next();
+
+    expect(result.done).toBe(true);
+    expect(result.value).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(delayMock).not.toHaveBeenCalled();
+  });
+
   it("polls repeatedly yielding updates", async () => {
     const data1 = createHermesResponse();
     const data2 = createHermesResponse({
@@ -321,6 +356,14 @@ function mockDelay() {
 
 function delayDurations(delayMock: ReturnType<typeof mockDelay>): number[] {
   return delayMock.mock.calls.map(([ms]) => ms as number);
+}
+
+// Mirrors the AbortError the built-in fetch implementation rejects with, which is
+// indistinguishable between a caller abort and the per-request timeout.
+function createAbortError(): Error {
+  const error = new Error("AbortError");
+  error.name = "AbortError";
+  return error;
 }
 
 function mockFetchResponse(data: HermesResponse, status = 200): Response {

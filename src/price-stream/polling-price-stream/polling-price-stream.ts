@@ -39,17 +39,24 @@ export async function *pollPriceStream(options: PollPriceStreamOptions): AsyncGe
     let response: Response;
     let status = 0;
     try {
-      const timeoutSignal = AbortSignal.timeout(10_000);
+      const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
       response = await fetch(url, {
         signal: options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal,
         headers,
       });
       status = response.status;
     } catch (error) {
-      if (error instanceof Error && (error.name === "AbortError" || error.message === "AbortError")) {
+      if (!isAbortError(error)) {
+        return { status: "failed", message: `Error fetching from Hermes: ${(error as Error).message}` };
+      }
+
+      if (options.signal?.aborted) {
         return { status: "aborted" };
       }
-      return { status: "failed", message: `Error fetching from Hermes: ${(error as Error).message}` };
+      return {
+        status: "failed",
+        message: `Timed out fetching from Hermes after ${REQUEST_TIMEOUT_MS} ms`,
+      };
     } finally {
       hermesFetchDuration.record(performance.now() - fetchStart, { status });
     }
@@ -105,8 +112,14 @@ export async function *pollPriceStream(options: PollPriceStreamOptions): AsyncGe
   }
 }
 
+const REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_RETRY_BASE_DELAY_MS = 500;
 const DEFAULT_RETRY_MAX_DELAY_MS = 5_000;
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error
+    && (error.name === "AbortError" || error.name === "TimeoutError" || error.message === "AbortError");
+}
 
 type FetchAttempt =
   | { status: "ok"; value: PriceUpdate }
