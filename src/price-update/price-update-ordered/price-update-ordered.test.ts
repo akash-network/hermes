@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { mock } from "vitest-mock-extended";
 import type { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
-import { PriceUpdateConfirmed } from "./price-update-confirmed";
+import { GasPrice } from "@cosmjs/stargate";
+import { PriceUpdateOrdered } from "./price-update-ordered";
 import type { PriceUpdate, PriceUpdateOptions } from "../../types";
 
-describe(PriceUpdateConfirmed.name, () => {
+describe(PriceUpdateOrdered.name, () => {
   it("executes contract with correct message and funds", async () => {
     const { signingClient, updater } = setup();
     signingClient.execute.mockResolvedValue({
@@ -59,6 +60,7 @@ describe(PriceUpdateConfirmed.name, () => {
     contractAddress: "akash1contract",
     denom: "uakt",
     updateFee: "1000",
+    gasPrice: GasPrice.fromString("0.025uakt"),
   };
 
   const priceUpdate: PriceUpdate = {
@@ -72,7 +74,7 @@ describe(PriceUpdateConfirmed.name, () => {
 
   function setup() {
     const signingClient = mock<SigningCosmWasmClient>();
-    const updater = new PriceUpdateConfirmed(signingClient);
+    const updater = new PriceUpdateOrdered(signingClient);
     return { signingClient, updater };
   }
 

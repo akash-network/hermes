@@ -1,7 +1,7 @@
 import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 import type { PriceUpdate, PriceUpdateOptions, PriceUpdater, UpdatePriceFeedMsg } from "../../types.ts";
 
-export class PriceUpdateConfirmed implements PriceUpdater {
+export class PriceUpdateOrdered implements PriceUpdater {
   readonly #signingClient: SigningCosmWasmClient;
 
   constructor(signingClient: SigningCosmWasmClient) {

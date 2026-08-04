@@ -4,6 +4,8 @@ import { validateContractAddress, validateWalletSecret } from "../validation.ts"
 import type { PriceProducerFactoryOptions } from "../types.ts";
 import { pollPriceStream } from "../price-stream/polling-price-stream/polling-price-stream.ts";
 import { priceSSEStream } from "../price-stream/price-sse-stream/price-sse-stream.ts";
+import { PriceUpdateOrdered } from "../price-update/price-update-ordered/price-update-ordered.ts";
+import { PriceUpdateUnordered } from "../price-update/price-update-unordered/price-update-unordered.ts";
 
 export interface CommandConfig extends HermesConfig {
   createHermesClient: (config: HermesConfig) => Promise<HermesClient>;
@@ -45,6 +47,7 @@ const configSchema = z.object({
     }
   }).optional(),
   PRICE_FETCHING_METHOD: z.enum(["polling", "sse"]).default("polling"),
+  PRICE_UPDATE_TX_METHOD: z.enum(["ordered", "unordered"]).default("ordered"),
   UPDATE_INTERVAL_MS: z.coerce.number().int().nonnegative().default(5 * 1000), // Default to 5 seconds
   HEALTHCHECK_PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   GAS_PRICE: z.string().regex(/^(\d+)(\.\d+)?uakt$/, { message: 'GAS_PRICE must be a valid number with unit (e.g., "0.025uakt")' }).default("0.025uakt"),
@@ -92,6 +95,12 @@ export function parseConfig(config: Record<string, string | undefined>): ParseCo
         pollingIntervalMs: result.data.UPDATE_INTERVAL_MS,
         authenticationToken: result.data.HERMES_API_KEY,
       });
+    },
+    priceUpdaterFactory(client, signer) {
+      if (result.data.PRICE_UPDATE_TX_METHOD === "unordered") {
+        return new PriceUpdateUnordered(client, signer);
+      }
+      return new PriceUpdateOrdered(client);
     },
     createHermesClient: (cfg: HermesConfig) => HermesClient.connect(cfg),
   };

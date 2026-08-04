@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mock } from "vitest-mock-extended";
 import { HermesClient, HermesConfig, classifyError } from "./hermes-client";
 import { blockchainPriceStaleness, priceUpdateCounter } from "./metrics.ts";
+import { PriceUpdateOrdered } from "./price-update/price-update-ordered/price-update-ordered.ts";
 import type { PriceUpdate, PriceProducerFactory, PriceProducerFactoryOptions } from "./types.ts";
 
 // ============================================================
@@ -1054,6 +1055,7 @@ function setup(input?: Partial<HermesConfig> & {
     unsafeAllowInsecureEndpoints: input?.unsafeAllowInsecureEndpoints,
     priceDeviationTolerance: input?.priceDeviationTolerance ?? { type: "absolute", value: 0 },
     priceProducerFactory: (input?.priceProducerFactory ?? priceProducerFactory) as PriceProducerFactory,
+    priceUpdaterFactory: input?.priceUpdaterFactory ?? (client => new PriceUpdateOrdered(client)),
     smartContractConfigCacheTTLMs: input?.smartContractConfigCacheTTLMs ?? 60_000,
     insufficientBalanceRetryDelayMs: input?.insufficientBalanceRetryDelayMs,
   });
