@@ -21,71 +21,122 @@ export async function *pollPriceStream(options: PollPriceStreamOptions): AsyncGe
     encoding: "base64",
   });
   const fetch = options.fetch ?? createFetch();
+  const sleep = options.delay ?? delay;
+  const retryBaseDelayMs = options.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
+  const retryMaxDelayMs = options.retryMaxDelayMs ?? DEFAULT_RETRY_MAX_DELAY_MS;
   const headers: Record<string, string> = {};
+
   if (options.authenticationToken) {
     headers["Authorization"] = `Bearer ${options.authenticationToken}`;
   }
 
-  let response: Response | undefined;
-  let status = 0;
-  while (!options.signal?.aborted) {
+  const url = `${options.baseUrl}/v2/updates/price/latest?${params.toString()}`;
+
+  // Fetches a single price update, mapping every failure mode onto a result so the
+  // polling loop below can decide between backing off and stopping.
+  const fetchPriceUpdate = async (): Promise<FetchAttempt> => {
     const fetchStart = performance.now();
-    response = undefined;
-    status = 0;
+    let response: Response;
+    let status = 0;
     try {
-      const timeoutSignal = AbortSignal.timeout(10_000);
-      response = await fetch(`${options.baseUrl}/v2/updates/price/latest?${params.toString()}`, {
+      const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+      response = await fetch(url, {
         signal: options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal,
         headers,
       });
       status = response.status;
     } catch (error) {
-      if (error instanceof Error && (error.name === "AbortError" || error.message === "AbortError")) {
-        break;
+      if (!isAbortError(error)) {
+        return { status: "failed", message: `Error fetching from Hermes: ${(error as Error).message}` };
       }
-      options.logger?.error(`Error fetching from Hermes: ${(error as Error).message}`);
-      continue;
+
+      if (options.signal?.aborted) {
+        return { status: "aborted" };
+      }
+      return {
+        status: "failed",
+        message: `Timed out fetching from Hermes after ${REQUEST_TIMEOUT_MS} ms`,
+      };
     } finally {
       hermesFetchDuration.record(performance.now() - fetchStart, { status });
     }
 
     if (!response.ok) {
       const statusText = response.status ? ` (HTTP ${response.status})` : "";
-      options.logger?.error(
-        `Failed to fetch from Hermes${statusText}: price data unavailable`,
-      );
-      continue;
+      return {
+        status: "failed",
+        message: `Failed to fetch from Hermes${statusText}: price data unavailable`,
+      };
     }
 
     let parsedData: HermesResponse;
     try {
       parsedData = await response.json() as HermesResponse;
     } catch (error) {
-      options.logger?.error(`Error parsing JSON from Hermes: ${(error as Error).message}`);
-      continue;
+      return { status: "failed", message: `Error parsing JSON from Hermes: ${(error as Error).message}` };
     }
 
     const priceUpdateResult = parsePriceUpdate(parsedData);
 
     if (!priceUpdateResult.ok) {
-      options.logger?.error(priceUpdateResult.message);
+      return { status: "failed", message: priceUpdateResult.message };
+    }
+
+    return { status: "ok", value: priceUpdateResult.value };
+  };
+
+  let consecutiveFailures = 0;
+  while (!options.signal?.aborted) {
+    const attempt = await fetchPriceUpdate();
+
+    if (attempt.status === "aborted") {
+      break;
+    }
+
+    if (attempt.status === "failed") {
+      options.logger?.error(attempt.message);
+      const backoffMs = Math.min(retryBaseDelayMs * 2 ** consecutiveFailures, retryMaxDelayMs);
+      consecutiveFailures++;
+      options.logger?.warn(`Retrying fetch from Hermes in ${backoffMs} ms (attempt ${consecutiveFailures})`);
+      await sleep(backoffMs, undefined, { signal: options.signal })
+        .catch((error) => options.logger?.warn(`Retry delay interrupted: ${(error as Error).message}`));
       continue;
     }
 
-    yield priceUpdateResult.value;
+    consecutiveFailures = 0;
+    yield attempt.value;
     if (options.pollingIntervalMs > 0) {
-      await delay(options.pollingIntervalMs, undefined, { signal: options.signal })
+      await sleep(options.pollingIntervalMs, undefined, { signal: options.signal })
         .catch((error) => options.logger?.warn(`Polling delay interrupted: ${(error as Error).message}`));
     }
   }
 }
 
+const REQUEST_TIMEOUT_MS = 10_000;
+const DEFAULT_RETRY_BASE_DELAY_MS = 500;
+const DEFAULT_RETRY_MAX_DELAY_MS = 5_000;
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error
+    && (error.name === "AbortError" || error.name === "TimeoutError" || error.message === "AbortError");
+}
+
+type FetchAttempt =
+  | { status: "ok"; value: PriceUpdate }
+  | { status: "aborted" }
+  | { status: "failed"; message: string };
+
 export interface PollPriceStreamOptions extends PriceProducerFactoryOptions {
   baseUrl: string;
   authenticationToken?: string;
   pollingIntervalMs: number;
+  /** First retry delay after a failed poll; doubles on each consecutive failure. Defaults to 500 ms. */
+  retryBaseDelayMs?: number;
+  /** Upper bound for the exponential retry delay. Defaults to 5000 ms. */
+  retryMaxDelayMs?: number;
   unsafeAllowInsecureEndpoints?: boolean;
   fetch?: typeof globalThis.fetch;
+  delay?: typeof delay;
 }
 
 function createFetch() {

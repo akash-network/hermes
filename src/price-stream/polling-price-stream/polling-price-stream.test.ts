@@ -82,7 +82,7 @@ describe("pollPriceStream", () => {
       .mockResolvedValueOnce(mockFetchResponse(data, 500))
       .mockResolvedValueOnce(mockFetchResponse(data));
 
-    const options = createOptions({ fetch: fetchMock, logger });
+    const options = createOptions({ fetch: fetchMock, logger, delay: mockDelay() });
     const gen = pollPriceStream(options);
     const result = await gen.next();
 
@@ -105,7 +105,7 @@ describe("pollPriceStream", () => {
       .mockResolvedValueOnce(mockFetchResponse(createHermesResponse({ parsed: [] })))
       .mockResolvedValueOnce(mockFetchResponse(goodData));
 
-    const options = createOptions({ fetch: fetchMock, logger });
+    const options = createOptions({ fetch: fetchMock, logger, delay: mockDelay() });
     const gen = pollPriceStream(options);
     const result = await gen.next();
 
@@ -120,12 +120,145 @@ describe("pollPriceStream", () => {
       .mockResolvedValueOnce(mockFetchResponse(createHermesResponse({ binary: { data: [] } })))
       .mockResolvedValueOnce(mockFetchResponse(goodData));
 
-    const options = createOptions({ fetch: fetchMock, logger });
+    const options = createOptions({ fetch: fetchMock, logger, delay: mockDelay() });
     const gen = pollPriceStream(options);
     const result = await gen.next();
 
     expect(logger.error).toHaveBeenCalledWith("No VAA binary data returned from Hermes");
     expect(result.value).toEqual({ priceData: goodData.parsed[0], vaa: goodData.binary.data[0] });
+  });
+
+  it("backs off exponentially across consecutive failures", async () => {
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const data = createHermesResponse();
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce(mockFetchResponse(data, 500))
+      .mockResolvedValueOnce(mockFetchResponse(data, 503))
+      .mockResolvedValueOnce(mockFetchResponse(data));
+    const delayMock = mockDelay();
+
+    const options = createOptions({ fetch: fetchMock, logger, delay: delayMock });
+    const gen = pollPriceStream(options);
+    const result = await gen.next();
+
+    expect(result.value).toEqual({ priceData: data.parsed[0], vaa: data.binary.data[0] });
+    expect(delayDurations(delayMock)).toEqual([500, 1000, 2000]);
+    expect(logger.warn).toHaveBeenCalledWith("Retrying fetch from Hermes in 500 ms (attempt 1)");
+    expect(logger.warn).toHaveBeenCalledWith("Retrying fetch from Hermes in 2000 ms (attempt 3)");
+  });
+
+  it("uses the configured base delay for the first retry", async () => {
+    const data = createHermesResponse();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(mockFetchResponse(data, 500))
+      .mockResolvedValueOnce(mockFetchResponse(data));
+    const delayMock = mockDelay();
+
+    const options = createOptions({ fetch: fetchMock, delay: delayMock, retryBaseDelayMs: 25 });
+    const gen = pollPriceStream(options);
+    await gen.next();
+
+    expect(delayDurations(delayMock)).toEqual([25]);
+  });
+
+  it("caps the backoff at the configured maximum delay", async () => {
+    const controller = new AbortController();
+    const data = createHermesResponse();
+    const fetchMock = vi.fn().mockResolvedValue(mockFetchResponse(data, 500));
+    // The generator retries forever while fetches fail, so stop it after five backoffs
+    const durations: number[] = [];
+    const delayMock = mockDelay().mockImplementation(async (ms) => {
+      durations.push(ms as number);
+      if (durations.length >= 5) controller.abort();
+    });
+
+    const options = createOptions({
+      fetch: fetchMock,
+      delay: delayMock,
+      signal: controller.signal,
+      retryBaseDelayMs: 100,
+      retryMaxDelayMs: 400,
+    });
+    const result = await pollPriceStream(options).next();
+
+    expect(result.done).toBe(true);
+    expect(durations).toEqual([100, 200, 400, 400, 400]);
+  });
+
+  it("resets the backoff after a successful poll", async () => {
+    const data = createHermesResponse();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(mockFetchResponse(data, 500))
+      .mockResolvedValueOnce(mockFetchResponse(data, 500))
+      .mockResolvedValueOnce(mockFetchResponse(data))
+      .mockResolvedValueOnce(mockFetchResponse(data, 500))
+      .mockResolvedValueOnce(mockFetchResponse(data));
+    const delayMock = mockDelay();
+
+    const options = createOptions({ fetch: fetchMock, delay: delayMock, pollingIntervalMs: 0 });
+    const gen = pollPriceStream(options);
+    await gen.next();
+    await gen.next();
+
+    // 500, 1000 before the first success; back to 500 after it
+    expect(delayDurations(delayMock)).toEqual([500, 1000, 500]);
+  });
+
+  it("stops when signal is aborted during the retry backoff", async () => {
+    const controller = new AbortController();
+    const data = createHermesResponse();
+    const fetchMock = vi.fn().mockResolvedValue(mockFetchResponse(data, 500));
+    const options = createOptions({
+      fetch: fetchMock,
+      retryBaseDelayMs: 60_000,
+      signal: controller.signal,
+    });
+
+    const gen = pollPriceStream(options);
+    const resultPromise = gen.next();
+    await vi.waitUntil(() => fetchMock.mock.calls.length === 1);
+    controller.abort();
+
+    const result = await resultPromise;
+    expect(result.done).toBe(true);
+    expect(result.value).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries when the per-request timeout aborts the fetch", async () => {
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const data = createHermesResponse();
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(createAbortError())
+      .mockRejectedValueOnce(new DOMException("The operation timed out.", "TimeoutError"))
+      .mockResolvedValueOnce(mockFetchResponse(data));
+    const delayMock = mockDelay();
+
+    const options = createOptions({ fetch: fetchMock, logger, delay: delayMock });
+    const result = await pollPriceStream(options).next();
+
+    expect(result.done).toBe(false);
+    expect(result.value).toEqual({ priceData: data.parsed[0], vaa: data.binary.data[0] });
+    expect(logger.error).toHaveBeenCalledWith("Timed out fetching from Hermes after 10000 ms");
+    expect(delayDurations(delayMock)).toEqual([500, 1000]);
+  });
+
+  it("stops when the caller signal aborts the fetch", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockImplementation(() => {
+      controller.abort();
+      return Promise.reject(createAbortError());
+    });
+    const delayMock = mockDelay();
+
+    const options = createOptions({ fetch: fetchMock, delay: delayMock, signal: controller.signal });
+    const result = await pollPriceStream(options).next();
+
+    expect(result.done).toBe(true);
+    expect(result.value).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(delayMock).not.toHaveBeenCalled();
   });
 
   it("polls repeatedly yielding updates", async () => {
@@ -215,6 +348,22 @@ function createOptions(overrides?: Partial<PollPriceStreamOptions>): PollPriceSt
     fetch: vi.fn(),
     ...overrides,
   };
+}
+
+function mockDelay() {
+  return vi.fn<NonNullable<PollPriceStreamOptions["delay"]>>().mockResolvedValue(undefined);
+}
+
+function delayDurations(delayMock: ReturnType<typeof mockDelay>): number[] {
+  return delayMock.mock.calls.map(([ms]) => ms as number);
+}
+
+// Mirrors the AbortError the built-in fetch implementation rejects with, which is
+// indistinguishable between a caller abort and the per-request timeout.
+function createAbortError(): Error {
+  const error = new Error("AbortError");
+  error.name = "AbortError";
+  return error;
 }
 
 function mockFetchResponse(data: HermesResponse, status = 200): Response {
