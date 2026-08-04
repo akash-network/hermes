@@ -55,6 +55,9 @@ export class PriceUpdateUnordered implements PriceUpdater {
       fee,
     );
     const deliveredTx = await this.#signingClient.broadcastTx(TxRaw.encode(tx).finish());
+    if (deliveredTx.code !== 0) {
+      throw new Error(`Broadcast failed with code ${deliveredTx.code}`);
+    }
     return {
       transactionHash: deliveredTx.transactionHash,
       gasUsed: BigInt(fee.gas),
