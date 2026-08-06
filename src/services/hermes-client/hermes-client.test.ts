@@ -252,6 +252,18 @@ describe(HermesClient.name, () => {
         );
       });
 
+      it("skips update when the price is unchanged and the tolerance is absolute 0", async () => {
+        const { client, contractClient } = setup({
+          priceDeviationTolerance: { type: "absolute", value: 0 },
+          priceFeed: buildPriceFeed("10000", -2, 2000),
+        });
+        contractClient.queryCurrentPrice.mockResolvedValue(buildCurrentPrice("10000", -2, 1000));
+
+        await client.updatePrice();
+
+        expect(contractClient.updatePrice).not.toHaveBeenCalled();
+      });
+
       it("skips update when percentage deviation is within tolerance", async () => {
         const { client, contractClient, logger } = setup({
           priceDeviationTolerance: { type: "percentage", value: 1 },
@@ -294,7 +306,7 @@ describe(HermesClient.name, () => {
         );
       });
 
-      it("updates on any price difference with default tolerance (absolute 0)", async () => {
+      it("updates on any price difference when no tolerance is configured", async () => {
         const { client, contractClient } = setup({
           priceFeed: buildPriceFeed("10001", -2, 2000),
         });
@@ -303,6 +315,29 @@ describe(HermesClient.name, () => {
         await client.updatePrice();
 
         expect(contractClient.updatePrice).toHaveBeenCalledTimes(1);
+      });
+
+      it("updates on an unchanged price when no tolerance is configured", async () => {
+        const { client, contractClient } = setup({
+          priceFeed: buildPriceFeed("10000", -2, 2000),
+        });
+        contractClient.queryCurrentPrice.mockResolvedValue(buildCurrentPrice("10000", -2, 1000));
+
+        await client.updatePrice();
+
+        expect(contractClient.updatePrice).toHaveBeenCalledTimes(1);
+      });
+
+      it("does not run a deviation check when no tolerance is configured", async () => {
+        const { client, logger } = setup({
+          priceFeed: buildPriceFeed("10000", -2, 2000),
+        });
+
+        await client.updatePrice();
+
+        expect(logger.log).not.toHaveBeenCalledWith(
+          expect.stringContaining("Checking if price deviation is acceptable"),
+        );
       });
 
       it("handles different exponents between new and current price", async () => {
@@ -315,6 +350,15 @@ describe(HermesClient.name, () => {
         await client.updatePrice();
 
         expect(contractClient.updatePrice).toHaveBeenCalledTimes(1);
+      });
+
+      it("fails the update on an unknown tolerance type", async () => {
+        const { client } = setup({
+          priceDeviationTolerance: { type: "relative", value: 1 } as unknown as HermesConfig["priceDeviationTolerance"],
+          priceFeed: buildPriceFeed("10000", -2, 2000),
+        });
+
+        await expect(client.updatePrice()).rejects.toThrow("Failed to update price: Unknown price deviation tolerance type: relative");
       });
 
       it("handles zero current price when calculating percentage deviation", async () => {
@@ -695,7 +739,7 @@ function setup(input?: Partial<HermesConfig> & {
     gasPrice: input?.gasPrice ?? "0.025uakt",
     logger,
     unsafeAllowInsecureEndpoints: input?.unsafeAllowInsecureEndpoints,
-    priceDeviationTolerance: input?.priceDeviationTolerance ?? { type: "absolute", value: 0 },
+    priceDeviationTolerance: input?.priceDeviationTolerance,
     priceProducerFactory: (input?.priceProducerFactory ?? priceProducerFactory) as PriceProducerFactory,
     smartContractConfigCacheTTLMs: input?.smartContractConfigCacheTTLMs ?? 60_000,
     unorderedTxTtlMs: input?.unorderedTxTtlMs ?? 180_000,
