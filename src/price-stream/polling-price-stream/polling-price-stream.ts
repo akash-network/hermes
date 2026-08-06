@@ -136,8 +136,11 @@ export interface PollPriceStreamOptions extends PriceProducerFactoryOptions {
   retryMaxDelayMs?: number;
   unsafeAllowInsecureEndpoints?: boolean;
   fetch?: typeof globalThis.fetch;
-  delay?: typeof delay;
+  delay?: Sleep;
 }
+
+/** The subset of `node:timers/promises` setTimeout the polling loop uses: pause for `ms`, abortable. */
+export type Sleep = (ms: number, value?: undefined, options?: { signal?: AbortSignal }) => Promise<void>;
 
 function createFetch() {
   // Agent is created to enable TLS session resumption

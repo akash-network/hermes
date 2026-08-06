@@ -701,6 +701,9 @@ function setup(input?: Partial<HermesConfig> & {
     unorderedTxTtlMs: input?.unorderedTxTtlMs ?? 180_000,
     insufficientBalanceRetryDelayMs: input?.insufficientBalanceRetryDelayMs,
     contractClientFactory: () => contractClient,
+    denom: "uakt",
+    gasMultiplier: 1.5,
+    priceUpdateTxMethod: "ordered",
   });
 
   return { client, priceUpdate, priceProducerFactory, logger, contractClient };

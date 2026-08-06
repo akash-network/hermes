@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { latestValue } from "./latest-value";
+import { latestValue } from "./latest-value.ts";
 
 describe("latestValue", () => {
   it("yields a value set before iteration begins", async () => {

@@ -7,7 +7,7 @@
         "hermes-cli": "dist/cli.js"
     },
     "scripts": {
-        "build": "tsc",
+        "build": "tsc --noEmit && tsc -p tsconfig.build.json",
         "start": "node dist/cli.js daemon",
         "dev": "NODE_ENV=development node --watch src/cli.ts daemon",
         "clean": "rm -rf dist",

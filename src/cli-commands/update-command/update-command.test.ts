@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { mock } from "vitest-mock-extended";
-import type { HermesClient } from "../hermes-client.ts";
-import type { CommandConfig } from "./command-config.ts";
+import type { HermesClient } from "../../services/hermes-client/hermes-client.ts";
+import type { CommandConfig } from "../command-config.ts";
 import { updateCommand } from "./update-command.ts";
 
 function setup() {

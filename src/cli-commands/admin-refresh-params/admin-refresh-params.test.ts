@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { mock } from "vitest-mock-extended";
-import type { ContractClientService } from "../services/contract-client/contract-client.service.ts";
-import type { CommandConfig } from "./command-config.ts";
+import type { ContractClientService } from "../../services/contract-client/contract-client.service.ts";
+import type { CommandConfig } from "../command-config.ts";
 import { adminRefreshParams } from "./admin-refresh-params.ts";
 
 function setup() {

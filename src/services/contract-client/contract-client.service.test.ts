@@ -143,7 +143,8 @@ describe(ContractClientService.name, () => {
 
       // The code alone is ambiguous across codespaces, and the codespace never reaches us: the raw log is what names the
       // failure, and the hash is what lets it be looked up on chain. Both have to survive into the message the daemon logs.
-      const error = await client.updatePrice(priceUpdate, { updateFee: "250" }).catch((error: unknown) => error as BroadcastError);
+      const error = await client.updatePrice(priceUpdate, { updateFee: "250" })
+        .catch((error: unknown) => error) as BroadcastError;
       expect(error.message).toContain(rawLog);
       expect(error.message).toContain("FAILED_TX_HASH");
       expect(error).toMatchObject({ code: 5, rawLog, transactionHash: "FAILED_TX_HASH" });
