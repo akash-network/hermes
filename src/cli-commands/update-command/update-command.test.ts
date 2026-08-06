@@ -6,17 +6,8 @@ import { updateCommand } from "./update-command.ts";
 
 function setup() {
   const client = mock<HermesClient>();
-  client.queryConfig.mockResolvedValue({
-    admin: "akash1admin",
-    wormhole_contract: "akash1wormhole",
-    update_fee: "1",
-    price_feed_id: "test-feed-id",
-    default_denom: "uakt",
-    default_base_denom: "uakt",
-    data_sources: [],
-  });
   const logger = mock<Console>();
-  const config: CommandConfig = {
+  const config = {
     rpcEndpoint: "https://rpc.akashnet.net:443",
     contractAddress: "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
     walletSecret: { type: "mnemonic", value: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" },
@@ -26,8 +17,8 @@ function setup() {
     rawConfig: {} as CommandConfig["rawConfig"],
     smartContractConfigCacheTTLMs: 60000,
     priceProducerFactory: vi.fn(),
-    createHermesClient: vi.fn(() => Promise.resolve(client)),
-  };
+    createHermesClient: vi.fn(() => client),
+  } as unknown as CommandConfig;
   return { config, client, logger };
 }
 

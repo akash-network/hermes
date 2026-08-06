@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { mock } from "vitest-mock-extended";
-import type { HermesClient } from "../hermes-client.ts";
-import type { CommandConfig } from "./command-config.ts";
+import type { HermesClient } from "../../services/hermes-client/hermes-client.ts";
+import type { CommandConfig } from "../command-config.ts";
 import { statusCommand } from "./status-command.ts";
 
 function setup() {
@@ -14,7 +14,7 @@ function setup() {
       HERMES_ENDPOINT: "https://hermes.pyth.network",
     },
     logger,
-    createHermesClient: vi.fn(() => Promise.resolve(client)),
+    createHermesClient: vi.fn(() => client),
   } as unknown as CommandConfig;
   return { config, client, logger };
 }

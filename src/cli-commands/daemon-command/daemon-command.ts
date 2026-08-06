@@ -1,7 +1,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { prometheusExporter } from "../instrumentation/prometheus-exporter.ts";
-import type { CommandConfig } from "./command-config.ts";
+import { prometheusExporter } from "../../instrumentation/prometheus-exporter.ts";
+import type { CommandConfig } from "../command-config.ts";
 
 export async function daemonCommand(config: CommandConfig): Promise<void> {
   if (config.signal.aborted) return;

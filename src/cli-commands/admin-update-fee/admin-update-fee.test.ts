@@ -1,21 +1,19 @@
-import EventEmitter from "node:events";
 import { describe, it, expect, vi } from "vitest";
 import { mock } from "vitest-mock-extended";
-import type { HermesClient } from "../hermes-client.ts";
+import type { ContractClientService } from "../services/contract-client/contract-client.service.ts";
 import type { CommandConfig } from "./command-config.ts";
 import { adminUpdateFee } from "./admin-update-fee.ts";
 
 function setup() {
-  const client = mock<HermesClient>();
+  const client = mock<ContractClientService>();
   const logger = mock<Console>();
-  const config: CommandConfig = {
+  const config = {
     rpcEndpoint: "https://rpc.akashnet.net:443",
     contractAddress: "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
-    mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+    walletSecret: { type: "mnemonic", value: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" },
     logger,
-    process: new EventEmitter(),
-    createHermesClient: vi.fn(() => Promise.resolve(client)),
-  };
+    createContractClient: vi.fn(() => client),
+  } as unknown as CommandConfig;
   return { config, client, logger };
 }
 
@@ -44,20 +42,20 @@ describe("adminUpdateFee", () => {
     const { config } = setup();
 
     await expect(adminUpdateFee(config, "abc")).rejects.toThrow("Invalid fee");
-    expect(config.createHermesClient).not.toHaveBeenCalled();
+    expect(config.createContractClient).not.toHaveBeenCalled();
   });
 
   it("rejects negative fee before connecting", async () => {
     const { config } = setup();
 
     await expect(adminUpdateFee(config, "-100")).rejects.toThrow("Invalid fee");
-    expect(config.createHermesClient).not.toHaveBeenCalled();
+    expect(config.createContractClient).not.toHaveBeenCalled();
   });
 
   it("rejects decimal fee before connecting", async () => {
     const { config } = setup();
 
     await expect(adminUpdateFee(config, "100.5")).rejects.toThrow("Invalid fee");
-    expect(config.createHermesClient).not.toHaveBeenCalled();
+    expect(config.createContractClient).not.toHaveBeenCalled();
   });
 });

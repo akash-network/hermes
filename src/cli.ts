@@ -18,13 +18,13 @@
 import process from "node:process";
 import { program } from "commander";
 import { createCommandBuilder } from "./cli-commands/create-command-builder.ts";
-import { updateCommand } from "./cli-commands/update-command.ts";
-import { queryCommand } from "./cli-commands/query-command.ts";
-import { statusCommand } from "./cli-commands/status-command.ts";
-import { daemonCommand } from "./cli-commands/daemon-command.ts";
-import { adminRefreshParams } from "./cli-commands/admin-refresh-params.ts";
-import { adminUpdateFee } from "./cli-commands/admin-update-fee.ts";
-import { adminTransfer } from "./cli-commands/admin-transfer.ts";
+import { updateCommand } from "./cli-commands/update-command/update-command.ts";
+import { queryCommand } from "./cli-commands/query-command/query-command.ts";
+import { statusCommand } from "./cli-commands/status-command/status-command.ts";
+import { daemonCommand } from "./cli-commands/daemon-command/daemon-command.ts";
+import { adminRefreshParams } from "./cli-commands/admin-refresh-params/admin-refresh-params.ts";
+import { adminUpdateFee } from "./cli-commands/admin-update-fee/admin-update-fee.ts";
+import { adminTransfer } from "./cli-commands/admin-transfer/admin-transfer.ts";
 
 const command = createCommandBuilder({ process, console });
 

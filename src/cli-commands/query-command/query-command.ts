@@ -1,4 +1,4 @@
-import type { CommandConfig } from "./command-config.ts";
+import type { CommandConfig } from "../command-config.ts";
 
 export interface QueryOptions {
   feed?: boolean;
@@ -7,7 +7,7 @@ export interface QueryOptions {
 }
 
 export async function queryCommand(config: CommandConfig, options: QueryOptions): Promise<void> {
-  const client = await config.createHermesClient(config);
+  const client = config.createContractClient(config);
 
   if (options.config) {
     config.logger?.log("Contract Configuration:\n");

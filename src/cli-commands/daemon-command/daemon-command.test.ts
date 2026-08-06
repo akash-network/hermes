@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { mock } from "vitest-mock-extended";
-import type { HermesClient } from "../hermes-client.ts";
-import type { CommandConfig } from "./command-config.ts";
+import type { HermesClient } from "../../services/hermes-client/hermes-client.ts";
+import type { CommandConfig } from "../command-config.ts";
 import { daemonCommand } from "./daemon-command.ts";
 
 describe("daemonCommand", () => {
@@ -105,7 +105,7 @@ describe("daemonCommand", () => {
     const logger = mock<Console>();
     const abortController = new AbortController();
     testAbortController = abortController;
-    const config: CommandConfig = {
+    const config = {
       rpcEndpoint: "https://rpc.akashnet.net:443",
       contractAddress: "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
       walletSecret: { type: "mnemonic", value: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" },
@@ -113,10 +113,10 @@ describe("daemonCommand", () => {
       logger,
       signal: abortController.signal,
       healthcheckPort: 0,
-      createHermesClient: vi.fn(() => Promise.resolve(client)),
+      createHermesClient: vi.fn(() => client),
       smartContractConfigCacheTTLMs: 0,
       rawConfig: {} as CommandConfig["rawConfig"],
-    };
+    } as unknown as CommandConfig;
     return { config, client, logger, abortController };
   }
 });

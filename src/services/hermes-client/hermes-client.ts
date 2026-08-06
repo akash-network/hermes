@@ -11,176 +11,83 @@
  * 4. Relays validated price to x/oracle module
  */
 
-import { SigningCosmWasmClient } from "@cosmjs/cosmwasm-stargate";
-import { DirectSecp256k1HdWallet, DirectSecp256k1Wallet, type OfflineDirectSigner } from "@cosmjs/proto-signing";
-import { GasPrice } from "@cosmjs/stargate";
-import { latestValue } from "./lib/generators/latest-value/latest-value.ts";
-import { blockchainPriceStaleness, priceUpdateCounter } from "./metrics.ts";
-import type { Logger, PriceProducerFactory, PriceUpdate, PriceUpdater, PythPriceData } from "./types.ts";
+import { latestValue } from "../../lib/generators/latest-value/latest-value.ts";
+import { blockchainPriceStaleness, priceUpdateCounter } from "../../metrics.ts";
+import { ContractClientService, type PriceResponse, type SigningClientServiceConfig } from "../contract-client/contract-client.service.ts";
+import type { Logger, PriceProducerFactory, PriceUpdate, PythPriceData } from "../../types.ts";
 import {
   sanitizeErrorMessage,
-  validateAkashAddress,
   validateContractAddress,
   validateEndpointUrl,
-  validateFeeAmount,
   validateWalletSecret,
-} from "./validation.ts";
+} from "../../validation.ts";
 
 export interface HermesConfig {
   /**
-     * Allows insecure endpoint URLs (HTTP, private/internal addresses).
-     * @default false
-     */
+   * Allows insecure endpoint URLs (HTTP, private/internal addresses).
+   * @default false
+   */
   unsafeAllowInsecureEndpoints?: boolean;
   rpcEndpoint: string;
   contractAddress: string;
-  walletSecret:
-        | {
-          type: "mnemonic";
-          /** mnemonic phrase for wallet */
-          value: string;
-        }
-        | {
-          type: "privateKey";
-          /** hex-encoded private key for wallet */
-          value: string;
-        };
-  denom?: string;
-  gasPrice?: string;
+  walletSecret: SigningClientServiceConfig["walletSecret"];
+
+  priceUpdateTxMethod: "ordered" | "unordered";
+  denom: string;
+  gasPrice: string;
+  gasMultiplier: number;
   smartContractConfigCacheTTLMs: number;
+  unorderedTxTtlMs: number;
   /**
-     * Optional threshold for skipping updates when the price change is below a tolerance.
-     *
-     * - For `type: "absolute"`, `value` is an absolute price difference in quote currency units
-     *   (e.g. `0.5` means $0.50 if the quote currency is USD).
-     * - For `type: "percentage"`, `value` is a number from 0 to 100
-     *   (e.g. `10` = 10%, `0.1` = 0.1%).
-     */
+   * Optional threshold for skipping updates when the price change is below a tolerance.
+   *
+   * - For `type: "absolute"`, `value` is an absolute price difference in quote currency units
+   *   (e.g. `0.5` means $0.50 if the quote currency is USD).
+   * - For `type: "percentage"`, `value` is a number from 0 to 100
+   *   (e.g. `10` = 10%, `0.1` = 0.1%).
+   */
   priceDeviationTolerance?: {
     type: "absolute" | "percentage";
     value: number;
   };
 
   /**
-     * Factory function to create a price producer (AsyncGenerator) that yields price updates.
-     * This allows for different implementations of price fetching logic (e.g. polling, SSE).
-     */
+   * Factory function to create a price producer (AsyncGenerator) that yields price updates.
+   * This allows for different implementations of price fetching logic (e.g. polling, SSE).
+   */
   priceProducerFactory: PriceProducerFactory;
 
   /**
-     * Factory function to create a PriceUpdater instance for submitting price updates to the chain.
-     */
-  priceUpdaterFactory: (client: SigningCosmWasmClient, signer: OfflineDirectSigner) => PriceUpdater;
-  /**
-     * Optional logger for informational messages. Should implement log, error, and warn methods.
-     */
+   * Optional logger for informational messages. Should implement log, error, and warn methods.
+   */
   logger?: Logger;
   /**
-     * Optional custom connectWithSigner function for testing or advanced use cases. Defaults to SigningCosmWasmClient.connectWithSigner.
-     */
-  connectWithSigner?: typeof SigningCosmWasmClient.connectWithSigner;
-  /**
-     * Delay in milliseconds between submission retries when insufficient balance is detected.
-     * @default 60000
-     */
+   * Delay in milliseconds between submission retries when insufficient balance is detected.
+   * @default 60000
+   */
   insufficientBalanceRetryDelayMs?: number;
+  /**
+   * Creates the client used to talk to the chain. Defaults to a real {@link ContractClientService},
+   * which opens an RPC connection; inject a fake to drive the client without a chain.
+   */
+  contractClientFactory?: (config: SigningClientServiceConfig) => ContractClient;
 }
 
-// =====================
-// Contract Execute Messages
-// Matches pyth contract msg.rs
-// =====================
-
-interface UpdateFeeMsg {
-  update_fee: {
-    new_fee: string;      // Uint256 serializes as string in JSON
-  };
-}
-
-interface TransferAdminMsg {
-  transfer_admin: {
-    new_admin: string;
-  };
-}
-
-interface RefreshOracleParamsMsg {
-  refresh_oracle_params: Record<string, never>;
-}
-
-// =====================
-// Contract Query Responses
-// Matches Pyth contract msg.rs
-// =====================
-
-interface DataSourceResponse {
-  emitter_chain: number;    // u16 - Wormhole chain ID (26 for Pythnet)
-  emitter_address: string;  // 32 bytes hex encoded
-}
-
-interface ConfigResponse {
-  admin: string;
-  wormhole_contract: string;
-  update_fee: string;       // Uint256 serializes as string
-  price_feed_id: string;
-  default_denom: string;
-  default_base_denom: string;
-  data_sources: DataSourceResponse[];
-}
-
-interface PriceResponse {
-  price: string;            // Uint128 serializes as string
-  conf: string;             // Uint128 serializes as string
-  expo: number;             // i32
-  publish_time: number;     // i64
-}
-
-interface PriceFeedResponse {
-  symbol: string;
-  price: string;            // Uint128 serializes as string
-  conf: string;             // Uint128 serializes as string
-  expo: number;             // i32
-  publish_time: number;     // i64
-  prev_publish_time: number; // i64
-}
-
-interface PriceFeedIdResponse {
-  price_feed_id: string;
-}
-
-interface OracleParamsResponse {
-  max_price_deviation_bps: number;    // u64
-  min_price_sources: number;          // u32
-  max_price_staleness_blocks: number; // i64
-  twap_window: number;                // i64
-  last_updated_height: number;        // u64
-}
+/**
+ * The chain access this client depends on. A subset of {@link ContractClientService}.
+ */
+export type ContractClient = Pick<ContractClientService, "getAccount" | "queryConfig" | "queryCurrentPrice" | "updatePrice" | "disconnect">;
 
 const DEFAULT_PRICE_DEVIATION_TOLERANCE: Required<HermesConfig>["priceDeviationTolerance"] = { type: "absolute", value: 0 };
 
 export class HermesClient {
-  #cosmClient?: SigningCosmWasmClient;
-  #wallet?: OfflineDirectSigner;
-  #senderAddress?: string;
-  readonly #config: Required<Omit<HermesConfig, "fetch" | "logger" | "connectWithSigner" | "gasPrice">> & {
-    gasPrice: GasPrice;
-  };
+  readonly #signingClient: ContractClient;
+  readonly #config: Required<Omit<HermesConfig, "fetch" | "logger" | "gasPrice" | "unsafeAllowInsecureEndpoints" | "priceUpdateTxMethod" | "smartContractConfigCacheTTLMs" | "gasMultiplier" | "unorderedTxTtlMs" | "contractClientFactory">>;
   #isRunning = false;
   #insufficientBalanceCooldownUntil: number | null = null;
   #lastPriceReceivedAt?: string;
   #lastPriceUpdateAt?: string;
   #logger: Exclude<HermesConfig["logger"], undefined>;
-  #connectWithSigner: typeof SigningCosmWasmClient.connectWithSigner;
-  #smartContractConfig: {
-    expiresAt: number;
-    value?: Promise<ConfigResponse>;
-  } = { expiresAt: 0 };
-
-  static async connect(config: HermesConfig): Promise<HermesClient> {
-    const client = new HermesClient(config);
-    await client.initialize();
-    return client;
-  }
-  #priceUpdater?: PriceUpdater;
 
   constructor(config: HermesConfig) {
     const unsafeAllowInsecureEndpoints = config.unsafeAllowInsecureEndpoints ?? false;
@@ -191,41 +98,33 @@ export class HermesClient {
 
     this.#config = {
       ...config,
-      denom: config.denom ?? "uakt",
-      gasPrice: GasPrice.fromString(config.gasPrice ?? "0.025uakt"),
-      unsafeAllowInsecureEndpoints,
       priceDeviationTolerance: config.priceDeviationTolerance ?? DEFAULT_PRICE_DEVIATION_TOLERANCE,
       insufficientBalanceRetryDelayMs: config.insufficientBalanceRetryDelayMs ?? 60_000,
     };
     this.#logger = config.logger ?? console;
-    this.#connectWithSigner = config.connectWithSigner ?? SigningCosmWasmClient.connectWithSigner;
+    const createContractClient = config.contractClientFactory ?? (contractClientConfig => new ContractClientService(contractClientConfig));
+    this.#signingClient = createContractClient({
+      rpcEndpoint: config.rpcEndpoint,
+      walletSecret: config.walletSecret,
+      contractAddress: config.contractAddress,
+      denom: config.denom,
+      gasPrice: config.gasPrice,
+      gasMultiplier: config.gasMultiplier,
+      priceUpdateTxMethod: config.priceUpdateTxMethod,
+      unorderedTxTtlMs: config.unorderedTxTtlMs,
+      smartContractConfigCacheTTLMs: config.smartContractConfigCacheTTLMs,
+    });
   }
 
-  /**
-     * Initialize the client and connect to the chain
-     */
-  async initialize(): Promise<void> {
+  async #initialize(): Promise<void> {
     try {
       this.#logger.log("Initializing Hermes client...");
 
-      this.#wallet = await this.#createWallet(this.#config.walletSecret);
-
-      const [account] = await this.#wallet.getAccounts();
-      this.#senderAddress = account.address;
-      this.#logger.log(`Using address: ${this.#senderAddress}`);
-
-      this.#cosmClient = await this.#connectWithSigner(
-        this.#config.rpcEndpoint,
-        this.#wallet,
-        {
-          gasPrice: this.#config.gasPrice,
-        },
-      );
-
-      this.#logger.log("Connected to chain successfully");
+      const account = await this.#signingClient.getAccount();
+      this.#logger.log(`Using address: ${account.address}`);
 
       this.#logger.log("Fetching smart contract configuration...");
-      const smartContractConfig = await this.queryConfig();
+      const smartContractConfig = await this.#signingClient.queryConfig();
       this.#logger.log(`Using Pyth Price Feed ID: ${smartContractConfig.price_feed_id}`);
       this.#logger.log(`Update fee: ${smartContractConfig.update_fee} ${this.#config.denom}`);
 
@@ -238,160 +137,10 @@ export class HermesClient {
     }
   }
 
-  #createWallet(secret: HermesConfig["walletSecret"]): Promise<OfflineDirectSigner> {
-    const prefix = "akash";
-    if (secret.type === "mnemonic") {
-      return DirectSecp256k1HdWallet.fromMnemonic(secret.value, { prefix });
-    }
-
-    const privateKeyBytes = Buffer.from(secret.value, "hex");
-    return DirectSecp256k1Wallet.fromKey(privateKeyBytes, prefix);
-  }
-
-  #getCosmClient(): SigningCosmWasmClient {
-    if (!this.#cosmClient) {
-      throw new Error("Client not initialized");
-    }
-    return this.#cosmClient;
-  }
-
-  /**
-     * Query current price from contract
-     */
-  async queryCurrentPrice(): Promise<PriceResponse> {
-    const price: PriceResponse = await this.#getCosmClient().queryContractSmart(
-      this.#config.contractAddress,
-      { get_price: {} },
-    );
-
-    return price;
-  }
-
-  /**
-     * Query current price feed with metadata from contract
-     */
-  async queryPriceFeed(): Promise<PriceFeedResponse> {
-    const feed: PriceFeedResponse = await this.#getCosmClient().queryContractSmart(
-      this.#config.contractAddress,
-      { get_price_feed: {} },
-    );
-
-    return feed;
-  }
-
-  /**
-     * Query contract configuration
-     */
-  async queryConfig(): Promise<ConfigResponse> {
-    if (!this.#smartContractConfig.value || Date.now() > this.#smartContractConfig.expiresAt) {
-      this.#smartContractConfig.expiresAt = Date.now() + this.#config.smartContractConfigCacheTTLMs;
-      this.#smartContractConfig.value = this.#getCosmClient().queryContractSmart(
-        this.#config.contractAddress,
-        { get_config: {} },
-      ).catch((error) => {
-        this.#smartContractConfig.value = undefined;
-        this.#smartContractConfig.expiresAt = 0;
-        throw error;
-      });
-    }
-
-    const config = await this.#smartContractConfig.value;
-
-    return config;
-  }
-
-  /**
-     * Query cached oracle parameters from contract
-     */
-  async queryOracleParams(): Promise<OracleParamsResponse> {
-    const params: OracleParamsResponse = await this.#getCosmClient().queryContractSmart(
-      this.#config.contractAddress,
-      { get_oracle_params: {} },
-    );
-
-    return params;
-  }
-
-  /**
-     * Refresh cached oracle parameters (admin only)
-     */
-  async refreshOracleParams(): Promise<string> {
-    if (!this.#senderAddress) {
-      throw new Error("Client not initialized");
-    }
-
-    const msg: RefreshOracleParamsMsg = {
-      refresh_oracle_params: {},
-    };
-
-    const result = await this.#getCosmClient().execute(
-      this.#senderAddress,
-      this.#config.contractAddress,
-      msg,
-      "auto",
-    );
-
-    return result.transactionHash;
-  }
-
-  /**
-     * Update the update fee (admin only)
-     */
-  async updateFee(newFee: string): Promise<string> {
-    // SEC-06: Validate fee format before any operation
-    validateFeeAmount(newFee);
-
-    if (!this.#senderAddress) {
-      throw new Error("Client not initialized");
-    }
-
-    const msg: UpdateFeeMsg = {
-      update_fee: {
-        new_fee: newFee,
-      },
-    };
-
-    const result = await this.#getCosmClient().execute(
-      this.#senderAddress,
-      this.#config.contractAddress,
-      msg,
-      "auto",
-    );
-
-    return result.transactionHash;
-  }
-
-  /**
-     * Transfer admin rights (admin only)
-     */
-  async transferAdmin(newAdmin: string): Promise<string> {
-    // SEC-05: Validate address format before any operation
-    validateAkashAddress(newAdmin);
-
-    if (!this.#senderAddress) {
-      throw new Error("Client not initialized");
-    }
-
-    const msg: TransferAdminMsg = {
-      transfer_admin: {
-        new_admin: newAdmin,
-      },
-    };
-
-    const result = await this.#getCosmClient().execute(
-      this.#senderAddress,
-      this.#config.contractAddress,
-      msg,
-      "auto",
-    );
-
-    return result.transactionHash;
-  }
-
   async updatePrice(options?: {
     signal?: AbortSignal;
   }): Promise<void> {
-    const smartCotractConfig = await this.queryConfig();
+    const smartCotractConfig = await this.#signingClient.queryConfig();
     const priceStream = this.#config.priceProducerFactory({
       priceFeedId: smartCotractConfig.price_feed_id,
       logger: this.#logger,
@@ -419,10 +168,6 @@ export class HermesClient {
      * 4. Contract verifies VAA via Wormhole, parses Pyth payload, relays to x/oracle
      */
   async #updatePrice(priceUpdate: PriceUpdate): Promise<void> {
-    if (!this.#senderAddress || !this.#wallet) {
-      throw new Error("Client not initialized");
-    }
-
     if (this.#insufficientBalanceCooldownUntil !== null) {
       if (Date.now() < this.#insufficientBalanceCooldownUntil) {
         this.#logger.warn("Skipping price update: insufficient balance cooldown active");
@@ -434,7 +179,7 @@ export class HermesClient {
     const startTime = performance.now();
 
     try {
-      const currentPrice = await this.queryCurrentPrice();
+      const currentPrice = await this.#signingClient.queryCurrentPrice();
 
       const staleness = priceUpdate.priceData.price.publish_time - currentPrice.publish_time;
       blockchainPriceStaleness.record(staleness);
@@ -444,17 +189,12 @@ export class HermesClient {
         return;
       }
 
-      const config = await this.queryConfig();
+      const config = await this.#signingClient.queryConfig();
 
       this.#logger.log("Submitting VAA to Pyth contract...");
       this.#logger.log(`  Wormhole contract: ${config.wormhole_contract}`);
-      this.#priceUpdater ??= this.#config.priceUpdaterFactory(this.#getCosmClient(), this.#wallet);
-      const result = await this.#priceUpdater.updatePrice(priceUpdate, {
-        senderAddress: this.#senderAddress,
-        contractAddress: this.#config.contractAddress,
-        denom: this.#config.denom,
+      const result = await this.#signingClient.updatePrice(priceUpdate, {
         updateFee: config.update_fee,
-        gasPrice: this.#config.gasPrice,
       });
 
       const price = priceUpdate.priceData.price;
@@ -540,6 +280,8 @@ export class HermesClient {
 
     // important to be set before any async operation to prevent multiple concurrent starts
     this.#isRunning = true;
+
+    await this.#initialize();
     signal.addEventListener("abort", () => {
       this.#isRunning = false;
       this.#logger.log("Hermes client stopped");
@@ -550,11 +292,7 @@ export class HermesClient {
         "Starting automatic price consumption",
       );
 
-      if (!this.#cosmClient) {
-        await this.initialize();
-      }
-
-      const smartContractConfig = await this.queryConfig();
+      const smartContractConfig = await this.#signingClient.queryConfig();
       const priceStream = this.#config.priceProducerFactory({
         priceFeedId: smartContractConfig.price_feed_id,
         signal,
@@ -599,6 +337,7 @@ export class HermesClient {
       this.#logger.error(safeMessage);
       throw new Error(safeMessage);
     } finally {
+      await this.#signingClient.disconnect();
       this.#isRunning = false;
     }
   }
@@ -616,11 +355,14 @@ export class HermesClient {
   }> {
     // SEC-08: Only return non-sensitive operational status fields.
     // Never include mnemonic, gasPrice, rpcEndpoint, or full config.
-    const smartContractConfig = await this.queryConfig();
+    const [smartContractConfig, account] = await Promise.all([
+      this.#signingClient.queryConfig(),
+      this.#signingClient.getAccount(),
+    ]);
 
     return {
       isRunning: this.#isRunning,
-      address: this.#senderAddress,
+      address: account.address,
       priceFeedId: smartContractConfig.price_feed_id,
       contractAddress: this.#config.contractAddress,
       lastPriceUpdateReceivedAt: this.#lastPriceReceivedAt,
@@ -628,10 +370,6 @@ export class HermesClient {
     };
   }
 }
-
-export type {
-  ConfigResponse, DataSourceResponse, OracleParamsResponse, PriceFeedIdResponse, PriceFeedResponse, PriceResponse, RefreshOracleParamsMsg, TransferAdminMsg, UpdateFeeMsg,
-};
 
 export type ErrorCode = "insufficient_balance" | "timeout" | "connection_issue" | "unknown";
 
