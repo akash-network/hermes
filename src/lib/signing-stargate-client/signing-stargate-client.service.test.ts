@@ -12,7 +12,7 @@ import { AuthInfo, TxBody, TxRaw } from "cosmjs-types/cosmos/tx/v1beta1/tx";
 import { describe, expect, it, vi } from "vitest";
 import { mock } from "vitest-mock-extended";
 
-import { SigningStargateClientService, type SigningClient } from "./signing-stargate-client.service";
+import { SigningStargateClientService, type SigningClient } from "./signing-stargate-client.service.ts";
 
 describe(SigningStargateClientService.name, () => {
   it("signs an unordered transaction with a zero sequence and a future timeout", async () => {

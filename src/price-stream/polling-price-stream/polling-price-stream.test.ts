@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { HermesResponse } from "../../types.ts";
-import { pollPriceStream, type PollPriceStreamOptions } from "./polling-price-stream.ts";
+import { pollPriceStream, type PollPriceStreamOptions, type Sleep } from "./polling-price-stream.ts";
 
 describe("pollPriceStream", () => {
   it("throws when priceFeedId is not provided", async () => {
@@ -169,7 +169,7 @@ describe("pollPriceStream", () => {
     // The generator retries forever while fetches fail, so stop it after five backoffs
     const durations: number[] = [];
     const delayMock = mockDelay().mockImplementation(async (ms) => {
-      durations.push(ms as number);
+      durations.push(ms);
       if (durations.length >= 5) controller.abort();
     });
 
@@ -351,11 +351,11 @@ function createOptions(overrides?: Partial<PollPriceStreamOptions>): PollPriceSt
 }
 
 function mockDelay() {
-  return vi.fn<NonNullable<PollPriceStreamOptions["delay"]>>().mockResolvedValue(undefined);
+  return vi.fn<Sleep>().mockResolvedValue(undefined);
 }
 
 function delayDurations(delayMock: ReturnType<typeof mockDelay>): number[] {
-  return delayMock.mock.calls.map(([ms]) => ms as number);
+  return delayMock.mock.calls.map(([ms]) => ms);
 }
 
 // Mirrors the AbortError the built-in fetch implementation rejects with, which is

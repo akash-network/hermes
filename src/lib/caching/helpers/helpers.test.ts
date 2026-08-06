@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { memoizeAsync } from "./helpers";
+import { memoizeAsync } from "./helpers.ts";
 
 describe(memoizeAsync.name, () => {
   it("memoizes successful results", async () => {
