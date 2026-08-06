@@ -12,3 +12,7 @@ README.md
 coverage
 .nyc_output
 *.log
+
+.claude
+.mcp.json
+.devcontainer
