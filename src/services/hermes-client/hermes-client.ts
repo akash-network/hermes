@@ -31,7 +31,6 @@ export interface HermesConfig {
   rpcEndpoint: string;
   contractAddress: string;
   walletSecret: SigningClientServiceConfig["walletSecret"];
-
   priceUpdateTxMethod: "ordered" | "unordered";
   denom: string;
   gasPrice: string;
@@ -40,6 +39,8 @@ export interface HermesConfig {
   unorderedTxTtlMs: number;
   /**
    * Optional threshold for skipping updates when the price change is below a tolerance.
+   * When omitted, no deviation filtering is applied and every price with a newer
+   * publish time is submitted, even if the value is unchanged.
    *
    * - For `type: "absolute"`, `value` is an absolute price difference in quote currency units
    *   (e.g. `0.5` means $0.50 if the quote currency is USD).
@@ -78,11 +79,9 @@ export interface HermesConfig {
  */
 export type ContractClient = Pick<ContractClientService, "getAccount" | "queryConfig" | "queryCurrentPrice" | "updatePrice" | "disconnect">;
 
-const DEFAULT_PRICE_DEVIATION_TOLERANCE: Required<HermesConfig>["priceDeviationTolerance"] = { type: "absolute", value: 0 };
-
 export class HermesClient {
   readonly #signingClient: ContractClient;
-  readonly #config: Required<Omit<HermesConfig, "fetch" | "logger" | "gasPrice" | "unsafeAllowInsecureEndpoints" | "priceUpdateTxMethod" | "smartContractConfigCacheTTLMs" | "gasMultiplier" | "unorderedTxTtlMs" | "contractClientFactory">>;
+  readonly #config: HermesConfig & Required<Pick<HermesConfig, "insufficientBalanceRetryDelayMs">>;
   #isRunning = false;
   #insufficientBalanceCooldownUntil: number | null = null;
   #lastPriceReceivedAt?: string;
@@ -98,7 +97,6 @@ export class HermesClient {
 
     this.#config = {
       ...config,
-      priceDeviationTolerance: config.priceDeviationTolerance ?? DEFAULT_PRICE_DEVIATION_TOLERANCE,
       insufficientBalanceRetryDelayMs: config.insufficientBalanceRetryDelayMs ?? 60_000,
     };
     this.#logger = config.logger ?? console;
@@ -238,27 +236,30 @@ export class HermesClient {
   }
 
   #isPriceDeviationAcceptable(newPrice: PythPriceData, currentPrice: PriceResponse): boolean {
+    const priceDeviationTolerance = this.#config.priceDeviationTolerance;
+    if (!priceDeviationTolerance) return false;
+
     const newPriceValue = parseFloat(newPrice.price.price) * Math.pow(10, newPrice.price.expo);
     const currentPriceValue = parseFloat(currentPrice.price) * Math.pow(10, currentPrice.expo);
     let isAcceptable = false;
 
     this.#logger.log(`Checking if price deviation is acceptable: new=${newPriceValue}, current=${currentPriceValue}`);
 
-    if (this.#config.priceDeviationTolerance.type === "absolute") {
+    if (priceDeviationTolerance.type === "absolute") {
       const deviation = Math.abs(newPriceValue - currentPriceValue);
-      isAcceptable = deviation <= this.#config.priceDeviationTolerance.value;
+      isAcceptable = deviation <= priceDeviationTolerance.value;
 
       if (isAcceptable) {
-        this.#logger.log(`Price deviation ${deviation} within absolute tolerance ${this.#config.priceDeviationTolerance.value}, skipping update`);
+        this.#logger.log(`Price deviation ${deviation} within absolute tolerance ${priceDeviationTolerance.value}, skipping update`);
       }
-    } else if (this.#config.priceDeviationTolerance.type === "percentage") {
+    } else if (priceDeviationTolerance.type === "percentage") {
       const deviationPercent = currentPriceValue === 0 ? Number.MAX_SAFE_INTEGER : Math.abs(newPriceValue - currentPriceValue) / currentPriceValue;
-      isAcceptable = deviationPercent <= this.#config.priceDeviationTolerance.value / 100;
+      isAcceptable = deviationPercent <= priceDeviationTolerance.value / 100;
       if (isAcceptable) {
-        this.#logger.log(`Price deviation ${(deviationPercent * 100).toFixed(2)}% within percentage tolerance ${(this.#config.priceDeviationTolerance.value).toFixed(2)}%, skipping update`);
+        this.#logger.log(`Price deviation ${(deviationPercent * 100).toFixed(2)}% within percentage tolerance ${(priceDeviationTolerance.value).toFixed(2)}%, skipping update`);
       }
     } else {
-      throw new Error(`Unknown price deviation tolerance type: ${this.#config.priceDeviationTolerance.type}`);
+      throw new Error(`Unknown price deviation tolerance type: ${priceDeviationTolerance.type}`);
     }
 
     return isAcceptable;
