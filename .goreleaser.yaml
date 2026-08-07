@@ -21,4 +21,5 @@ dockers_v2:
       - package.json
       - package-lock.json
       - tsconfig.json
+      - tsconfig.build.json
       - src
