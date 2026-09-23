@@ -5,6 +5,7 @@ import type { PriceProducerFactoryOptions } from "../types.ts";
 import { pollPriceStream } from "../price-stream/polling-price-stream/polling-price-stream.ts";
 import { priceSSEStream } from "../price-stream/price-sse-stream/price-sse-stream.ts";
 import { ContractClientService, type SigningClientServiceConfig } from "../services/contract-client/contract-client.service.ts";
+import { DEFAULT_HERMES_ENDPOINT, RouterSetUpdater } from "../services/router-set-updater/router-set-updater.ts";
 
 export interface CommandConfig extends HermesConfig {
   createHermesClient: (config: HermesConfig) => HermesClient;
@@ -17,8 +18,8 @@ export interface CommandConfig extends HermesConfig {
 
 const configSchema = z.object({
   RPC_ENDPOINT: z.url().default("https://rpc.akashnet.net:443"),
-  HERMES_ENDPOINT: z.url().default("https://hermes.pyth.network"),
-  HERMES_API_KEY: z.string().optional(),
+  HERMES_ENDPOINT: z.url().default(DEFAULT_HERMES_ENDPOINT),
+  HERMES_API_KEY: z.string().nonempty(),
   CONTRACT_ADDRESS: z.string().nonempty().superRefine(propagateError(validateContractAddress)),
   WALLET_SECRET: z.string()
     .regex(/^(mnemonic|privateKey):.+$/, { message: 'must be in the format "mnemonic:<12/24 word phrase>" or "privateKey:<hex format>"' })
@@ -69,6 +70,17 @@ export function parseConfig(config: Record<string, string | undefined>): ParseCo
   }
 
   const unsafeAllowInsecureEndpoints = result.data.NODE_ENV === "development"; // Enforce secure endpoints in production
+  let routerSetUpdater: RouterSetUpdater;
+  try {
+    routerSetUpdater = new RouterSetUpdater({
+      endpoint: result.data.HERMES_ENDPOINT,
+      authenticationToken: result.data.HERMES_API_KEY,
+      unsafeAllowInsecureEndpoints,
+    });
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Invalid HERMES_ENDPOINT" };
+  }
+
   const parsedConfig: ParsedConfig = {
     rawConfig: result.data,
     unsafeAllowInsecureEndpoints,
@@ -84,6 +96,7 @@ export function parseConfig(config: Record<string, string | undefined>): ParseCo
     insufficientBalanceRetryDelayMs: result.data.INSUFFICIENT_BALANCE_RETRY_DELAY_MS,
     priceUpdateTxMethod: result.data.PRICE_UPDATE_TX_METHOD,
     unorderedTxTtlMs: result.data.UNORDERED_TX_TTL_MS,
+    routerSetUpdater,
     priceProducerFactory(options: PriceProducerFactoryOptions) {
       if (result.data.PRICE_FETCHING_METHOD === "sse") {
         return priceSSEStream({
